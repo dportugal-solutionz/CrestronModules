@@ -1,0 +1,313 @@
+/*******************************************************************************************
+  SIMPL+ Module Information
+  (Fill in comments below)
+*******************************************************************************************/
+/*
+Dealer Name:
+System Name:
+System Number:
+Programmer:
+Comments:
+*/
+
+/*******************************************************************************************
+  Compiler Directives
+  (Uncomment and declare compiler directives as needed)
+*******************************************************************************************/
+// #ENABLE_DYNAMIC
+// #SYMBOL_NAME ""
+// #HINT ""
+// #DEFINE_CONSTANT
+// #CATEGORY "" 
+// #PRINT_TO_TRACE
+// #DIGITAL_EXPAND 
+// #ANALOG_SERIAL_EXPAND 
+// #OUTPUT_SHIFT 
+// #HELP_PDF_FILE ""
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#DEFINE_CONSTANT MAX_DISPLAYS 16
+#DEFINE_CONSTANT CMD_TYPE_READ 1
+#DEFINE_CONSTANT CMD_TYPE_WRITE 2
+// #ENCODING_ASCII
+// #ENCODING_UTF16
+// #ENCODING_INHERIT_FROM_PARENT
+// #ENCODING_INHERIT_FROM_PROGRAM
+
+#HELP_BEGIN
+	Controls Christie FHD552 in control daisy chain.
+#HELP_END
+
+/*******************************************************************************************
+  Include Libraries
+*******************************************************************************************/
+
+/*******************************************************************************************
+  DIGITAL, ANALOG and SERIAL INPUTS and OUTPUTS
+*******************************************************************************************/
+DIGITAL_INPUT 
+	all_on
+	,all_off
+	,enable[MAX_DISPLAYS]
+	,power_on[MAX_DISPLAYS]
+	,power_off[MAX_DISPLAYS]
+	,power_toggle[MAX_DISPLAYS]
+	;
+BUFFER_INPUT 
+	rx$[1000];
+
+DIGITAL_OUTPUT 
+	_skip_
+	,_skip_	
+	,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_
+	,power_on_fb[MAX_DISPLAYS]	
+	,power_off_fb[MAX_DISPLAYS]	
+	;
+STRING_OUTPUT 
+	_SKIP_
+	,_SKIP_
+	,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_,_skip_
+	,tx$;
+
+INTEGER_PARAMETER display_id[MAX_DISPLAYS];
+
+
+/* GLOBALS */
+string txQ[5000];
+integer sendOK;
+integer inSendTimer;
+integer inSendQ;
+integer power_state[MAX_DISPLAYS];
+integer inPolling;
+integer pausepolling;
+
+FUNCTION Main()
+{
+	txQ = "";
+	sendOk = 1;	
+	inPolling = 0;
+    pausepolling = 0;
+	WaitForInitializationComplete();
+}
+
+FUNCTION SendTimer()
+{
+	inSendTimer = 1;
+	wait(50,wSend)
+	{
+		inSendTimer = 0;
+		sendOk = 1;
+	}
+}
+
+FUNCTION StartSendTimer()
+{
+	if (inSendTimer > 0)
+		retimewait(50,wSend);
+	else
+		SendTimer();
+}
+
+FUNCTION SendNext()
+{
+	string temp[30];
+    
+	if (inSendQ = 0)
+	{
+		While(find("\x0D",txQ) > 0)
+		{
+			inSendQ = 1;
+			if (sendOk = 1)
+			{
+				temp = remove("\x0D",txQ);
+				tx$ = temp;
+				StartSendTimer();
+			}
+			delay(25);
+		}
+        inSendQ = 0;
+	}	
+}
+
+FUNCTION Send(string cmd)
+{
+    if (right(cmd,1) <> "\x0D")
+        txQ = txQ + cmd + "\x0D";
+    else
+        txQ = txQ + cmd;
+
+    SendNext();
+}
+
+STRING_FUNCTION CreateCmdString(integer id,integer cmd_type,string cmd,integer value)
+{
+	string ret[100];
+
+    if (cmd_type = CMD_TYPE_WRITE)
+        makestring(ret,"\x07%s%s%s%s\x08\x0D",chr(id),chr(cmd_type),cmd,chr(value));
+    else
+        makestring(ret,"\x07%s%s%s\x08\x0D",chr(id),chr(cmd_type),cmd);
+
+	return (ret);
+}
+
+FUNCTION UpdateFb(integer index)
+{
+    if (enable[index])
+    {
+        if (power_state[index] > 0)
+        {
+            power_off_fb[index] = 0;
+			power_on_fb[index] = 1;
+        }
+        else
+        {
+            power_on_fb[index] = 0;
+            power_off_fb[index] = 1;
+        }
+    }
+    else
+    {
+        power_on_fb[index] = 0;
+        power_off_fb[index] = 0;
+    }
+}
+
+FUNCTION UdpateAllFb()
+{
+	integer x;
+
+	for(x=1 to MAX_DISPLAYS)
+	{
+        UpdateFb(x);		
+	}
+}
+
+FUNCTION StartPolling()
+{
+	integer x;
+    string cmd[20];
+	if (inPolling = 0)
+	{
+        inPolling = 1;
+		for(x=1 to MAX_DISPLAYS)
+        {            
+			if (enable[x] > 0)
+            {
+                if (pausepolling = 0)
+                {
+                    cmd = CreateCmdString(display_id[x],CMD_TYPE_READ,"PWR",0);                    
+                    if (find(cmd,txQ) = 0)
+                        Send(cmd);
+                }
+                else
+                {
+                    pausepolling = pausepolling - 1;
+                    if (pausepolling > 60)
+                        pausepolling = 60;
+                }
+                delay(100);
+            }
+        }   
+	}
+}
+
+PUSH all_on
+{
+    pausepolling = 30;
+	txQ = "";	
+	tx$ = CreateCmdString(0,CMD_TYPE_WRITE,"POW",1);
+}
+
+PUSH all_off
+{
+    pausepolling = 30;
+	txQ = "";	
+	tx$ = CreateCmdString(0,CMD_TYPE_WRITE,"POW",0);
+}
+
+PUSH power_on
+{
+    integer x;
+    string cmd[10];
+    x = getlastmodifiedarrayindex();    
+    pausepolling = 10;
+    power_state[x] = 1;
+    cmd = CreateCmdString(display_id[x],CMD_TYPE_WRITE,"PWR",power_state[x]);
+    Send(cmd);
+    UpdateFb(x);
+}
+PUSH power_off
+{
+    integer x;
+    string cmd[10];
+    x = getlastmodifiedarrayindex();    
+    pausepolling = 10;
+    power_state[x] = 0;
+    cmd = CreateCmdString(display_id[x],CMD_TYPE_WRITE,"PWR",power_state[x]);
+    Send(cmd);
+    UpdateFb(x);
+}
+PUSH power_toggle
+{
+    integer x;
+    string cmd[10];
+    x = getlastmodifiedarrayindex();    
+    pausepolling = 10;
+    if (power_state[x] = 1)
+        power_state[x] = 0;
+    else
+        power_state[x] = 1;
+    cmd = CreateCmdString(display_id[x],CMD_TYPE_WRITE,"PWR",power_state[x]);
+    Send(cmd);
+    UpdateFb(x);
+}
+
+PUSH enable
+{
+	StartPolling();
+}
+
+THREADSAFE CHANGE rx$
+{
+    string temp[30];
+    integer id;
+    integer value;
+    integer index;
+    integer msgtype;
+
+    while(find("\x0D",rx$))
+    {    
+        temp = remove("\x07",rx$);      
+        temp = remove("\x0D",rx$);      
+        temp = left(temp,len(temp) - 2); //tail is \x08\x0D
+
+        msgtype = 65535;    //invalidate variable
+        id = 65535;         //invalidate variable
+
+        id = byte(temp,1);            
+        msgtype = byte(temp,2);
+        value = byte(temp,len(temp));            
+
+        if (msgtype = 0)
+        {
+            if (find("POW",temp) > 0)
+            {                    
+                for(index = 1 to MAX_DISPLAYS)
+                {
+                    if(enable[index])
+                    {
+                        if (id = display_id[index])
+                        {
+                            power_state[index] = value;
+                            UpdateFb(index);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    SendOk = 1;
+    SendNext();
+}

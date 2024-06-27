@@ -1,0 +1,293 @@
+/*
+    by Daniel Portugal
+    daniel.portugal@solutionzinc.com
+*/
+#CATEGORY "46" "CrosspointEx" // Custom
+#DEFAULT_VOLATILE
+#ENABLE_TRACE
+#ENABLE_STACK_CHECKING
+#DEFINE_CONSTANT MAX_IO 100
+#DEFINE_CONSTANT STRING_LIMIT 255
+#DIGITAL_EXPAND InputsWithOutputs
+#ANALOG_SERIAL_EXPAND InputsWithOutputs
+#HELP_BEGIN
+Part of CrosspointEx modules:
+* CrosspointEx Controller 
+* EquipmentCrosspointEx
+* ControlCrosspointEx
+
+These group of modules sends and receives digital, analog, and serial cues
+using a string address form of both the Cue and the Crosspoint.
+
+All serial inputs are limited to 255.
+
+INPUTS
+=============
+disconnect_from_all		disconnect this crosspoint from all control crosspoints
+connect_to_exp			send the equipment address to be connected.
+disc_all_connect_exp	will disconnect all, and then connect to the equipment address
+disconnect_from_exp		send the equipment address to diconnect from.
+
+d_in					cues whose value will be sent to the control output with the matching address
+a_in
+s_in
+
+
+OUTPUTS
+=============
+connected				will be high if this crosspoint to one or more equipment crosspoint
+connections				a string of all equipment connected.
+d_out					cues whose value was sent from the control input with the matching address
+a_out
+s_out
+
+PARAMETERS
+=============
+address					the address of this crosspoint
+digital_address[]		the address of d_in, d_out;
+analog_address[]		the address of a_in, a_out;
+serial_address[]		the address of s_in, s_out;
+
+#HELP_END
+
+digital_input
+    _skip_ //address paramater
+    ,disconnect_from_all;
+
+digital_output
+    _skip_ //address paramater
+    ,connected;
+
+string_input
+    connect_to_exp[STRING_LIMIT]
+	,disc_all_connect_exp[STRING_LIMIT]
+    ,disconnect_from_exp[STRING_LIMIT];
+
+string_output
+    connections
+	,_skip_
+    ,_skip_;
+
+digital_input
+    d_in[MAX_IO, MAX_IO];
+digital_output
+    d_out[MAX_IO, MAX_IO];
+
+analog_input
+    a_in[MAX_IO, MAX_IO];
+analog_output
+    a_out[MAX_IO, MAX_IO];
+
+string_input
+    s_in[MAX_IO, MAX_IO][STRING_LIMIT];
+string_output
+    s_out[MAX_IO,MAX_IO];
+
+STRING_PARAMETER
+	address[100]
+	,_skip_
+	,digital_address[MAX_IO][100]
+	,_skip_ //connect
+	,_skip_ //disc_all_connect_exp
+	,_skip_ //disconnect
+	,analog_address[MAX_IO][100]
+	,serial_address[MAX_IO][100];
+
+#BEGIN_PARAMETER_PROPERTIES address, digital_address, analog_address, serial_address
+	propValidUnits = UnitString;
+	propDefaultUnit = UnitString;
+	propDefaultValue = "";
+#END_PARAMETER_PROPERTIES
+
+
+#INCLUDEPATH "C:\libs\Crestron\simplsharp\MagicBus\MagicBus\bin\Debug"
+#USER_SIMPLSHARP_LIBRARY "CrosspointEx"
+
+string temp[STRING_LIMIT];
+ControlCrosspoint crosspoint;
+
+// region Functions
+function Debugger(string msg)
+{
+    Print("[ControlCrosspointExp (%s)] %s",address, msg);
+}
+// endregion
+// region Callback Functions
+callback function SetDigitalOutput(string address, integer index, integer value)
+{
+    if (index > 0 && index <= MAX_IO)
+        d_out[index] = (value > 0);
+}
+callback function SetAnalogOutput(string address, integer index, integer value)
+{
+    if (index > 0 && index <= MAX_IO)
+        a_out[index] = value;
+}
+callback function SetSerialOutput(string address, integer index, string value)
+{
+    if (index > 0 && index <= MAX_IO)
+        s_out[index] = value;
+}
+eventhandler ConnectedEventHanlder(ControlCrosspoint sender, OnConnectedEventArgs args)
+{
+    integer x;
+    connections = args.Connections;
+    for(x = 1 to MAX_IO)
+    {
+        try
+        {
+            if (len(digital_address[x]) > 0)
+                crosspoint.SetDigital(x, d_in[x]);
+            if (len(analog_address[x]) > 0)
+                crosspoint.SetAnalog(x, a_in[x]);
+            if (len(serial_address[x]) > 0)
+            {
+                temp = s_in[x];
+                crosspoint.SetSerial(x, temp);
+            }
+        }
+        catch
+        {
+            Debugger(GetExceptionMessage());
+        }
+    }
+}
+// endregion
+
+// region Events
+PUSH disconnect_from_all
+{
+    try
+    {
+        crosspoint.DisconnectFromAll();
+    }
+    catch
+    {
+		temp = GetExceptionMessage();
+        Debugger(temp);
+    }
+}
+CHANGE disc_all_connect_exp
+{
+	try
+    {
+        crosspoint.DisconnectFromAll();
+		temp = disc_all_connect_exp;
+        crosspoint.Connect(temp);
+    }
+    catch
+    {
+		temp = GetExceptionMessage();
+        Debugger(temp);
+    }
+}
+CHANGE connect_to_exp
+{
+    try
+    {
+		temp = connect_to_exp;
+        crosspoint.Connect(temp);
+    }
+    catch
+    {
+        temp = GetExceptionMessage();
+        Debugger(temp);
+    }
+}
+
+CHANGE disconnect_from_exp
+{
+    try
+    {
+		temp = disconnect_from_exp;
+        crosspoint.Disconnect(temp);
+    }
+    catch
+    {
+        temp = GetExceptionMessage();
+        Debugger(temp);
+    }
+}
+
+THREADSAFE PUSH d_in
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+    try
+    {
+        crosspoint.SetDigital(x, 1);
+    }
+    catch
+    {
+        temp = GetExceptionMessage();
+        Debugger(temp);
+    }
+}
+THREADSAFE RELEASE d_in
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+    try
+    {
+        crosspoint.SetDigital(x, 0);
+    }
+    catch
+    {
+        temp = GetExceptionMessage();
+        Debugger(temp);
+    }
+}
+THREADSAFE CHANGE a_in
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+    try
+    {
+        crosspoint.SetAnalog(x, a_in[x]);
+    }
+    catch
+    {
+        temp = GetExceptionMessage();
+        Debugger(temp);
+    }
+}
+THREADSAFE CHANGE s_in
+{
+    integer x;
+    string temp[STRING_LIMIT];
+    x = GetLastModifiedArrayIndex();
+    temp = s_in[x];
+    try
+    {
+        crosspoint.SetSerial(x,temp);
+    }
+    catch
+    {
+        temp = GetExceptionMessage();
+        Debugger(temp);
+    }
+}
+// endregion
+
+FUNCTION Main()
+{
+    integer x;
+
+    crosspoint.SetAddress(address);
+    RegisterDelegate(crosspoint, ChangeDigital, SetDigitalOutput);
+    RegisterDelegate(crosspoint, ChangeAnalog, SetAnalogOutput);
+    RegisterDelegate(crosspoint, ChangeSerial, SetSerialOutput);
+    RegisterEvent(crosspoint, OnConnected, ConnectedEventHanlder);
+
+    for(x = 1 to MAX_IO)
+    {
+        if (len(digital_address[x]) > 0)
+            crosspoint.RegisterDigitalCue(digital_address[x], x);
+        if (len(analog_address[x]) > 0)
+            crosspoint.RegisterAnalogCue(analog_address[x], x);
+        if (len(serial_address[x]) > 0)
+            crosspoint.RegisterSerialCue(serial_address[x], x);
+    }
+                                    
+    WaitForInitializationComplete();
+}

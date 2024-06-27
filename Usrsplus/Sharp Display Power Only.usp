@@ -1,0 +1,115 @@
+DIGITAL_INPUT power_on,power_off,enable_polling,syntax_left_justified;
+BUFFER_INPUT rx$[100];
+DIGITAL_OUTPUT power_on_fb,power_off_fb;
+STRING_OUTPUT tx$;
+
+INTEGER poll;
+
+FUNCTION SetFbPowerOn()
+{
+	power_off_fb = 0;
+	power_on_fb = 1;	
+}
+
+FUNCTION SetFbPowerOff()
+{
+	power_on_fb = 0;	
+	power_off_fb = 1;	
+}
+
+FUNCTION PausePolling()
+{
+	poll = 0;
+}
+
+PUSH power_on
+{
+	PausePolling();
+	delay(100);
+	if (syntax_left_justified)
+	{
+		tx$ = "POWR1   \x0D";
+	}
+	else
+	{
+		tx$ = "POWR   1\x0D";
+	}
+	
+	SetFbPowerOn();	
+}
+
+PUSH power_off
+{
+	PausePolling();
+	delay(100);
+	if (syntax_left_justified)
+	{
+		tx$ = "POWR0   \x0D";
+	}
+	else
+	{
+		tx$ = "POWR   0\x0D";
+	}
+	
+	SetFbPowerOff();
+}
+
+PUSH enable_polling
+{
+	while(enable_polling)
+	{
+		poll = poll + 1;
+		
+		switch(poll)
+		{
+			case (3):
+			{
+				if (syntax_left_justified)
+					tx$ = "POWR?   \x0D";
+				else
+					tx$ = "POWR   ?\x0D";
+			}
+			case (4):
+			{
+				tx$ = "POWR????\x0D";
+			}
+			case (5):
+			{
+				if (syntax_left_justified)
+					tx$ = "RSPW1   \x0D";
+				else
+					tx$ = "RSPW   1\x0D";
+			}
+			default:
+			{
+				if (poll >= 6)
+					poll = 0;
+			}
+		}				
+		delay(300);
+	}
+}
+
+CHANGE rx$
+{
+	string temp[20];
+	
+	if (len(rx$) > 50)
+		clearbuffer(rx$);
+	
+	while(find("\x0D",rx$) > 0)
+	{
+		temp = remove("\x0D",rx$);
+		if (find(temp,"WAIT") > 0)
+		{
+			poll = 0;
+		}
+		else if (poll = 3 || poll = 4)
+		{
+			if (find(temp,"1") > 0)
+				SetFbPowerOn();
+			if (find(temp,"0") > 0)
+				SetFbPowerOff();
+		}
+	}
+}

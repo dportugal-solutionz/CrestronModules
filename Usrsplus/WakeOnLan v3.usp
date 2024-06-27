@@ -1,0 +1,134 @@
+// #ENABLE_DYNAMIC
+#HINT "Wake On Lan for PCs"
+// #DEFINE_CONSTANT
+// #CATEGORY "4" // Device Interface
+// #PRINT_TO_TRACE
+// #DIGITAL_EXPAND 
+// #ANALOG_SERIAL_EXPAND 
+// #OUTPUT_SHIFT 
+// #HELP_PDF_FILE ""
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+// #ENCODING_ASCII
+// #ENCODING_UTF16
+// #ENCODING_INHERIT_FROM_PARENT
+// #ENCODING_INHERIT_FROM_PROGRAM
+
+#HELP_BEGIN
+	sends a WOL packet to MAC_ADDRESS
+	mac_address = AA:BB:CC:DD:EE:FF or ab.cd:Ef:00:12
+	suggested IP is the broadcast subnet such as 192.168.1.255
+    UseBroadcast will replace the last octet of the ip with .255
+#HELP_END
+
+
+/**Inputs and Outputs**/
+DIGITAL_INPUT
+	_skip_,
+	_skip_,
+	Send;
+
+STRING_INPUT 
+	_skip_,
+	IP_ADDRESS$[32],
+	MAC_ADDRESS$[17];
+
+DIGITAL_OUTPUT
+	_skip_,
+	_skip_,
+	sent;
+
+
+STRING_PARAMETER IpAddress[32];
+STRING_PARAMETER MacAddress[17];
+INTEGER_PARAMETER UseBroadcast;
+            
+STRING sMacAddress[17],sIpAddress[32],magicPacket[110];
+UDP_SOCKET udpSocket[50];            
+
+FUNCTION CreatePacket(){
+   	string header[6];
+	string mac[6];
+	string summedmacAddress[100];
+	integer i;
+	
+	magicPacket = "";
+	summedmacAddress = ""; 
+    header = "";
+
+    for(i=1 to 6)
+    	header = header + chr(255);
+	
+	mac =       chr(hextoi(mid(sMacAddress,1,2)));
+	mac = mac + chr(hextoi(mid(sMacaddress,4,2)));
+	mac = mac + chr(hextoi(mid(sMacaddress,7,2)));
+	mac = mac + chr(hextoi(mid(sMacaddress,10,2)));
+	mac = mac + chr(hextoi(mid(sMacaddress,13,2)));
+	mac = mac + chr(hextoi(mid(sMacaddress,16,2)));
+	
+	for (i = 1 to 16)
+		summedmacAddress = summedmacAddress + mac;
+		
+	magicPacket = header + summedmacAddress; //create the final magic packet
+}
+
+
+
+            
+PUSH Send
+{
+	signed_integer result;
+    string ipA[32];
+	sent = 0;
+	if (len(sIpAddress) > 0)
+	{
+        ipA = sIpAddress;
+        if (UseBroadcast)
+        {
+            //replace the last octet
+            result = find(".",sIpAddress);
+            result = find(".",sIpAddress,result+1);
+            result = find(".",sIpAddress,result+1);
+            ipA = left(sIpAddress,result - 1);
+            ipA = ipA + ".255";
+        }
+
+		result = SocketUDP_Enable(udpSocket,ipA,3163);
+		if (result = 0)
+		{
+            print("\nSending WOL to %s %s\n",ipA,sMacaddress); 
+			result = SocketSend(udpSocket,magicPacket);	
+			if (result = 0)
+			{
+				sent = 1;
+			}		
+			else
+				GenerateUserError("Cannot send WOL to %s. Error sending(%d)",sIpAddress,result);
+            SocketUDP_Disable(udpSocket);
+		}
+		else
+		{
+			GenerateUserError("Cannot send WOL to %s. Error opening Socket(%d)",sIpAddress,result);
+		}        
+	}
+}
+
+CHANGE IP_ADDRESS$
+{
+	sIpAddress = IP_ADDRESS$;
+	CreatePacket();
+}
+CHANGE MAC_ADDRESS$
+{
+	sMacAddress = MAC_ADDRESS$;
+	CreatePacket();
+}
+
+FUNCTION Main()
+{
+	sIpAddress = IpAddress;
+	sMacAddress = MacAddress;
+	CreatePacket();
+	WaitForInitializationComplete();
+}

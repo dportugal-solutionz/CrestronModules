@@ -1,0 +1,508 @@
+/*******************************************************************************************
+  SIMPL+ Module Information
+  (Fill in comments below)
+*******************************************************************************************/
+/*
+Dealer Name: Spinitar
+System Name: 
+System Number:
+Programmer: Daniel Portugal
+Comments:
+*/
+
+/*******************************************************************************************
+  Compiler Directives
+*******************************************************************************************/
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+
+#HELP_BEGIN
+Default Baud Rate 9600,N,8,1
+
+Provides feedback based on last button push until updated by query.
+
+Example:
+power_on_fb will be set high if power_on or power_toggle
+power_off_fb will be set high by power_off or power_toggle
+power_is_on will only be set high if power query returns that power is on.
+
+input and picmute feedback will all be low if power_off_fb is high;
+#HELP_END
+
+
+
+DIGITAL_INPUT
+    power_on
+    ,power_off
+    ,power_toggle
+    ,_skip_
+    ,_skip_
+    ,input_rgb
+    ,input_dvi
+    ,input_video
+    ,input_hdmi
+    ,input_bnc
+    ,input_hdmi2
+    ,input_hdmi3
+    ,input_hdbaset
+    ,_skip_
+    ,pic_mute_on
+    ,pic_mute_off
+    ,pic_mute_toggle
+    ,_skip_
+    ,enable_polling
+    ;
+
+BUFFER_INPUT
+    rx$[1000]
+    ;
+
+DIGITAL_OUTPUT
+    power_on_fb
+    ,power_off_fb
+    ,power_is_on
+    ,power_is_cooling
+    ,_skip_
+    ,input_rgb_fb
+    ,input_dvi_fb
+    ,input_video_fb
+    ,input_hdmi_fb
+    ,input_bnc_fb
+    ,input_hdmi2_fb
+    ,input_hdmi3_fb
+    ,input_hdbaset_fb
+    ,_skip_
+    ,pic_mute_on_fb
+    ,pic_mute_off_fb
+    ,_skip_
+    ,_skip_
+    ;
+
+ANALOG_OUTPUT
+    lamphours
+    ;
+
+STRING_OUTPUT
+    tx$;
+
+INTEGER_PARAMETER ID;
+#BEGIN_PARAMETER_PROPERTIES ID
+   propValidUnits = unitDecimal;
+   propDefaultUnit = unitDecimal;
+   propBounds = 0d , 99d;
+   propDefaultValue = 0d;
+#END_PARAMETER_PROPERTIES
+
+INTEGER powerstate,picmutestate,inputstate;
+INTEGER poll,pollpaused,sendtimer,sending,txOk;
+STRING cmdQ[100];
+STRING lastcmdsent[10];
+
+Function StartSendTimer()
+{
+    sendtimer = 1;
+    wait(50,wSend)
+    {
+        sendtimer = 0;
+        txOK = 1;        
+    }
+}
+
+Function SendLoop()
+{
+    string s[10];
+    if (sending = 0)
+    {
+        while(find("\x0D",cmdQ) > 0)
+        {
+            if (txOK = 1)
+            {
+                s = remove("\x0D",cmdQ);
+                lastcmdsent = s;
+                tx$ = s;
+                txOk = 0;
+                StartSendTimer();
+            }
+            delay(25);
+        }
+    }
+    sending = 0;
+}
+
+Function Send(string cmd)
+{
+    string c[10];
+    makestring(c,"V%02u%s\x0D",ID,cmd);
+    cmdQ = cmdQ + c;
+    SendLoop();
+}
+
+Function UpdateFb()
+{
+    if (powerstate > 0)
+    {
+        power_off_fb = 0;
+        power_on_fb = 1;
+
+        if (picmutestate > 0)
+        {
+            pic_mute_ofF_fb = 0;
+            pic_mute_on_fb = 1;
+        }
+        else
+        {
+            pic_mute_on_fb = 0;
+            pic_mute_off_fb = 1;
+        }
+        switch(inputstate)
+        {
+            case(1):
+            {                
+                input_dvi_fb        = 0;
+                input_video_fb      = 0;
+                input_hdmi_fb       = 0;
+                input_bnc_fb        = 0;
+                input_hdmi2_fb      = 0;
+                input_hdmi3_fb      = 0;
+                input_hdbaset_fb    = 0;
+                input_rgb_fb        = 1;
+            }
+            case(3):
+            {
+                input_rgb_fb        = 0;                
+                input_video_fb      = 0;
+                input_hdmi_fb       = 0;
+                input_bnc_fb        = 0;
+                input_hdmi2_fb      = 0;
+                input_hdmi3_fb      = 0;
+                input_hdbaset_fb    = 0;
+                input_dvi_fb        = 1;
+            }
+            case(4):
+            {
+                input_rgb_fb        = 0;
+                input_dvi_fb        = 0;                
+                input_hdmi_fb       = 0;
+                input_bnc_fb        = 0;
+                input_hdmi2_fb      = 0;
+                input_hdmi3_fb      = 0;
+                input_hdbaset_fb    = 0;
+                input_video_fb      = 1;
+            }
+            case(6):
+            {
+                input_rgb_fb        = 0;
+                input_dvi_fb        = 0;
+                input_video_fb      = 0;                
+                input_bnc_fb        = 0;
+                input_hdmi2_fb      = 0;
+                input_hdmi3_fb      = 0;
+                input_hdbaset_fb    = 0;
+                input_hdmi_fb       = 1;
+            }
+            case(7):
+            {
+                input_rgb_fb        = 0;
+                input_dvi_fb        = 0;
+                input_video_fb      = 0;
+                input_hdmi_fb       = 0;                
+                input_hdmi2_fb      = 0;
+                input_hdmi3_fb      = 0;
+                input_hdbaset_fb    = 0;
+                input_bnc_fb        = 1;
+            }
+            case(9):
+            {
+                input_rgb_fb        = 0;
+                input_dvi_fb        = 0;
+                input_video_fb      = 0;
+                input_hdmi_fb       = 0;
+                input_bnc_fb        = 0;                
+                input_hdmi3_fb      = 0;
+                input_hdbaset_fb    = 0;
+                input_hdmi2_fb      = 1;
+            }
+            case(12):
+            {
+                input_rgb_fb        = 0;
+                input_dvi_fb        = 0;
+                input_video_fb      = 0;
+                input_hdmi_fb       = 0;
+                input_bnc_fb        = 0;
+                input_hdmi2_fb      = 0;                
+                input_hdbaset_fb    = 0;
+                input_hdmi3_fb      = 1;
+            }
+            case(15):
+            {
+                input_rgb_fb        = 0;
+                input_dvi_fb        = 0;
+                input_video_fb      = 0;
+                input_hdmi_fb       = 0;
+                input_bnc_fb        = 0;
+                input_hdmi2_fb      = 0;
+                input_hdmi3_fb      = 0;
+                input_hdbaset_fb    = 1;
+            }
+        }
+    }
+    else
+    {
+        power_on_fb = 0;
+        power_off_fb = 1;
+
+        pic_mute_on_fb = 0;
+        pic_mute_off_fb = 0;
+
+        input_rgb_fb        = 0;
+        input_dvi_fb        = 0;
+        input_video_fb      = 0;
+        input_hdmi_fb       = 0;
+        input_bnc_fb        = 0;
+        input_hdmi2_fb      = 0;
+        input_hdmi3_fb      = 0;
+        input_hdbaset_fb    = 0;
+    }
+}
+
+PUSH enable_polling
+{
+    WHILE(enable_polling)
+    {
+        if (pollpaused > 0)
+        {
+            pollpaused = pollpaused - 1;
+        }
+        else
+        {
+            poll = poll + 1;
+
+            switch(poll)
+            {
+                case(1): //get status
+                {
+                    Send("G0007");
+                }
+                case(2): //get light hours
+                {
+                    Send("G0004");
+                }
+                case(3): //get source
+                {
+                    if (powerstate > 0)
+                        Send("G0220");  
+                }
+                case(4): //get blank
+                {
+                    if (powerstate > 0)
+                        Send("G0302");
+                }
+                default:
+                {
+                    if (poll >= 5)
+                        poll = 0;
+                }                
+            }
+        }
+        delay(100);
+    }
+}
+
+PUSH power_on
+{
+    pollpaused = 3;
+    powerstate = 1;
+    Send("S0001");
+    UpdateFb();
+}
+PUSH power_off
+{
+    pollpaused = 3;
+    powerstate = 0;
+    Send("S0002");
+    UpdateFb();
+}
+PUSH power_toggle
+{
+    if (powerstate > 0)
+    {
+        powerstate = 1;
+        Send("S0001");
+    }
+    else
+    {
+        powerstate = 0;
+        Send("S0002");
+    }
+    pollpaused = 3;
+    UpdateFb();
+}
+
+PUSH input_rgb
+{
+    pollpaused = 3;
+    inputstate = 1;
+    Send("S0201");
+    UpdateFb();
+}
+PUSH input_dvi
+{
+        pollpaused = 3;
+    inputstate = 3;
+    Send("S0203");
+    UpdateFb();
+}
+PUSH input_video
+{
+    pollpaused = 3;
+    inputstate = 4;
+    Send("S0204");
+    UpdateFb();
+}
+PUSH input_hdmi
+{
+    pollpaused = 3;
+    inputstate = 6;
+    Send("S0206");
+    UpdateFb();
+}
+PUSH input_bnc
+{
+    pollpaused = 3;
+    inputstate = 7;
+    Send("S0207");
+    UpdateFb();
+}
+PUSH input_hdmi2
+{
+    pollpaused = 3;
+    inputstate = 9;
+    Send("S0209");
+    UpdateFb();
+}
+PUSH input_hdmi3
+{
+    pollpaused = 3;
+    inputstate = 12;
+    Send("S0212");
+    UpdateFb();
+}
+PUSH input_hdbaset
+{
+    pollpaused = 3;
+    inputstate = 15;
+    Send("S0215");
+    UpdateFb();
+}
+
+PUSH pic_mute_on
+{
+    pollpaused = 3;
+    picmutestate = 1;
+    Send("S03021");
+    UpdateFb();
+}
+PUSH pic_mute_off
+{
+    pollpaused = 3;
+    picmutestate = 0;
+    Send("S03020");
+    UpdateFb();
+}
+PUSH pic_mute_toggle
+{
+    pollpaused = 3;        
+    if (picmutestate = 0)
+    {    
+        picmutestate = 1;
+        Send("S03021");     
+    }
+    else
+    {    
+        picmutestate = 0;
+        Send("S03020");     
+    }
+    UpdateFb();
+}
+
+CHANGE rx$
+{
+    string temp[30];
+    integer P;
+    integer value;
+
+    while(find("\x0D",rx$))
+    {
+        temp = remove("\x0D",rx$);
+        if (len(temp) > 2)
+        {
+            P = getc(temp);
+            value = atoi(temp);
+            if (P = 0x50) //'P' = pass.
+            {
+                SWITCH(1)
+                {
+                    case (find("G0007",lastcmdsent) > 0):
+                    {
+                        switch(value)
+                        {
+                            case(0): //reset
+                            {
+                                powerstate = 0;
+                                power_is_on = 0;
+                                power_is_cooling = 0;
+                            }
+                            case(1): //standby
+                            {
+                                powerstate = 0; 
+                                power_is_on = 0;
+                                power_is_cooling = 0;
+                            }
+                            case(2): //operation
+                            {
+                                powerstate = 1;
+                                power_is_cooling = 0;
+                                power_is_on = 1;                                
+                            }
+                            case(3): //cooling
+                            {
+                                powerstate = 1;
+                                power_is_on = 0;
+                                power_is_cooling = 1;
+                            }
+                        } 
+                    }
+                    case (find("G0004",lastcmdsent) > 0):
+                    {
+                        lamphours = value;
+                    }
+                    case (find("G0220",lastcmdsent) > 0):
+                    {
+                        inputstate = value;
+                    }
+                    case (find("G0302",lastcmdsent) > 0):
+                    {
+                        if (value > 0)
+                            picmutestate = 1;
+                        else   
+                            picmutestate = 0;
+                    }
+                }
+            }
+        }        
+    }
+    txOk = 1;
+    if (sendtimer > 0)
+    {
+        sendtimer = 0;
+        cancelwait(wSend);
+    }        
+}
+
+FUNCTION Main()
+{
+    txOk = 1;	
+	WaitforInitializationComplete();
+	UpdateFb();
+}

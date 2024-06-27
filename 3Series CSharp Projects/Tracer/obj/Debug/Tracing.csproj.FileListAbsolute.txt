@@ -1,0 +1,9 @@
+C:\libs\Crestron\simplsharp\Tracer\Tracer\obj\Debug\ResolveAssemblyReference.cache
+C:\libs\Crestron\simplsharp\Tracer\Tracer\bin\Debug\Tracing.dll
+C:\libs\Crestron\simplsharp\Tracer\Tracer\bin\Debug\Tracing.pdb
+C:\libs\Crestron\simplsharp\Tracer\Tracer\bin\Debug\SimplSharpCustomAttributesInterface.dll
+C:\libs\Crestron\simplsharp\Tracer\Tracer\bin\Debug\SimplSharpHelperInterface.dll
+C:\libs\Crestron\simplsharp\Tracer\Tracer\bin\Debug\SimplSharpReflectionInterface.dll
+C:\libs\Crestron\simplsharp\Tracer\Tracer\bin\Debug\Newtonsoft.Json.Compact.dll
+C:\libs\Crestron\simplsharp\Tracer\Tracer\obj\Debug\Tracing.dll
+C:\libs\Crestron\simplsharp\Tracer\Tracer\obj\Debug\Tracing.pdb

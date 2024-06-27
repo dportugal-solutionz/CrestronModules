@@ -1,0 +1,8 @@
+C:\libs\Crestron\simplsharp\AllenHeath_AHM64\AllenHeath_AHM64\bin\Debug\AllenHeath_AHM64.dll
+C:\libs\Crestron\simplsharp\AllenHeath_AHM64\AllenHeath_AHM64\bin\Debug\AllenHeath_AHM64.pdb
+C:\libs\Crestron\simplsharp\AllenHeath_AHM64\AllenHeath_AHM64\bin\Debug\SimplSharpCustomAttributesInterface.dll
+C:\libs\Crestron\simplsharp\AllenHeath_AHM64\AllenHeath_AHM64\bin\Debug\SimplSharpHelperInterface.dll
+C:\libs\Crestron\simplsharp\AllenHeath_AHM64\AllenHeath_AHM64\bin\Debug\Newtonsoft.Json.Compact.dll
+C:\libs\Crestron\simplsharp\AllenHeath_AHM64\AllenHeath_AHM64\obj\Debug\ResolveAssemblyReference.cache
+C:\libs\Crestron\simplsharp\AllenHeath_AHM64\AllenHeath_AHM64\obj\Debug\AllenHeath_AHM64.dll
+C:\libs\Crestron\simplsharp\AllenHeath_AHM64\AllenHeath_AHM64\obj\Debug\AllenHeath_AHM64.pdb

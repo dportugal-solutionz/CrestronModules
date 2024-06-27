@@ -1,0 +1,690 @@
+/*
+    By Daniel Portugal  
+*/
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+//#ENABLE_TRACE
+#DEFINE_CONSTANT MAX_DISPLAYS 5
+#DEFINE_CONSTANT INPUT_VAL_PC               20
+#DEFINE_CONSTANT INPUT_VAL_BNC              30
+#DEFINE_CONSTANT INPUT_VAL_DVI              24
+#DEFINE_CONSTANT INPUT_VAL_AV               12
+#DEFINE_CONSTANT INPUT_VAL_SVIDEO           4
+#DEFINE_CONSTANT INPUT_VAL_COMPONENT        8
+#DEFINE_CONSTANT INPUT_VAL_MAGICNET         32
+#DEFINE_CONSTANT INPUT_VAL_DVI_VIDEO        31
+#DEFINE_CONSTANT INPUT_VAL_RF               48
+#DEFINE_CONSTANT INPUT_VAL_DTV              64
+#DEFINE_CONSTANT INPUT_VAL_HDMI             33
+#DEFINE_CONSTANT INPUT_VAL_HDMI_PC          34
+#DEFINE_CONSTANT INPUT_VAL_HDMI_2           35
+#DEFINE_CONSTANT CMD_QUEUE_TX_DELIMITER    "\xBE\xEF\xFF"
+#DEFINE_CONSTANT TX_SPEED                   50              //in hundredths of a second
+#DEFINE_CONSTANT CMD_POWER                  17
+#DEFINE_CONSTANT CMD_VOLUME                 18
+#DEFINE_CONSTANT CMD_MUTE                   19
+#DEFINE_CONSTANT CMD_INPUT                  20
+#DEFINE_CONSTANT CMD_ASPECT                 21
+#DEFINE_CONSTANT CMD_POLL_STATUS            0
+    
+DIGITAL_INPUT  
+    _skip_,_skip_,_skip_,_skip_,_skip_ //skip params
+    ,all_on
+    ,all_off
+    ,persistent_power
+    ,persistent_input
+    ;
+
+BUFFER_INPUT
+    _skip_
+    ,rx$[1000]
+    ;
+
+STRING_OUTPUT
+    _skip_
+    ,tx$
+    ;
+
+DIGITAL_INPUT
+    enable[MAX_DISPLAYS]
+    ,power_on[MAX_DISPLAYS]
+    ,power_off[MAX_DISPLAYS]
+    ,power_toggle[MAX_DISPLAYS]
+    ,volume_up[MAX_DISPLAYS]
+    ,volume_down[MAX_DISPLAYS]
+    ,volume_mute_on[MAX_DISPLAYS]
+    ,volume_mute_off[MAX_DISPLAYS]
+    ,volume_mute_toggle[MAX_DISPLAYS]
+    ,input_pc[MAX_DISPLAYS]
+    ,input_bnc[MAX_DISPLAYS]
+    ,input_dvi[MAX_DISPLAYS]
+    ,input_av[MAX_DISPLAYS]
+    ,input_svideo[MAX_DISPLAYS]
+    ,input_component[MAX_DISPLAYS]
+    ,input_magicnet[MAX_DISPLAYS]
+    ,input_dvi_video[MAX_DISPLAYS]
+    ,input_rf[MAX_DISPLAYS]
+    ,input_dtv[MAX_DISPLAYS]
+    ,input_hdmi[MAX_DISPLAYS]
+    ,input_hdmi_pc[MAX_DISPLAYS]
+    ,input_hdmi_2[MAX_DISPLAYS]
+    ;
+
+DIGITAL_OUTPUT    
+    _skip_,_skip_,_skip_,_skip_,_skip_ //skip params
+    ,_skip_ //skip all on
+    ,_skip_ //skip all off
+    ,_skip_ //skip pers power
+    ,_skip_ //skip pers input
+    ,_skip_,_skip_,_skip_,_skip_,_skip_ //skip enable
+    ,power_on_fb[MAX_DISPLAYS]
+    ,power_off_fb[MAX_DISPLAYS]
+    ,_skip_,_skip_,_skip_,_skip_,_skip_
+    ,_skip_,_skip_,_skip_,_skip_,_skip_
+    ,_skip_,_skip_,_skip_,_skip_,_skip_
+    ,volume_mute_on_fb[MAX_DISPLAYS]
+    ,volume_mute_off_fb[MAX_DISPLAYS]
+    ,_skip_,_skip_,_skip_,_skip_,_skip_
+    ,input_pc_fb[MAX_DISPLAYS]
+    ,input_bnc_fb[MAX_DISPLAYS]
+    ,input_dvi_fb[MAX_DISPLAYS]
+    ,input_av_fb[MAX_DISPLAYS]
+    ,input_svideo_fb[MAX_DISPLAYS]
+    ,input_component_fb[MAX_DISPLAYS]
+    ,input_magicnet_fb[MAX_DISPLAYS]
+    ,input_dvi_video_fb[MAX_DISPLAYS]
+    ,input_rf_fb[MAX_DISPLAYS]
+    ,input_dtv_fb[MAX_DISPLAYS]
+    ,input_hdmi_fb[MAX_DISPLAYS]
+    ,input_hdmi_pc_fb[MAX_DISPLAYS]
+    ,input_hdmi_2_fb[MAX_DISPLAYS]
+    ;
+
+ANALOG_OUTPUT
+	_skip_
+    ,volume_fb[MAX_DISPLAYS]
+    ;
+
+INTEGER_PARAMETER displayID[MAX_DISPLAYS];
+
+/* GLOBAL VARIABLES */
+STRUCTURE _unitdata
+{
+    integer id;
+    integer power;
+    integer poweractual;
+    integer lastpower;
+    integer input;
+    integer lastinput;
+    integer volume;
+    integer mute;
+    integer pausepolling;
+    integer poll;
+};
+
+_unitdata UnitData[MAX_DISPLAYS];
+string txQ[1000];
+integer inSend;
+integer okToSend;
+integer inTxTimer;
+integer inPolling;
+
+
+STRING_FUNCTION TxTimer()
+{
+    inTxTimer = 1;
+    trace("Samsung MDC Chain.In TxTimer");
+    wait(50,wTxTimer)
+    {
+        trace("Samsung MDC Chain.TxTimer expired");
+        inTxTimer = 0;
+        okToSend = 1;
+    }
+}
+
+STRING_FUNCTION StartTxTimer()
+{
+    if (inTxTimer > 0)
+    {
+        trace("Samsung MDC Chain.Retime TxTimer");
+        retimewait(TX_SPEED,wTxTimer);
+    }        
+    else   
+        TxTimer();
+}
+
+STRING_FUNCTION SendNext()
+{
+    string ret[100];
+    ret = "";
+
+    trace("Samsung MDC Chain.SendNext");
+    if (inSend = 0)
+    {
+        trace("Samsung MDC Chain.SendNext Activating.");        
+        while (find(CMD_QUEUE_TX_DELIMITER,txQ) > 0)
+        {
+            trace("Samsung MDC Chain.SendNext Loop Start.");                
+            inSend = 1;            
+            if (okToSend = 1)
+            {
+                trace("Samsung MDC Chain.SendNext Sending...");
+                ret = remove(CMD_QUEUE_TX_DELIMITER,txQ);        
+                ret = left(ret,len(ret) - len(CMD_QUEUE_TX_DELIMITER));
+                tx$ = ret;
+                trace("Samsung MDC Chain.SendNext Sent:%s",ret);
+                trace("Samsung MDC Chain.TxQ Len:%u",len(txQ));
+                okToSend = 0;
+                StartTxTimer();
+            }
+            else
+                trace("Samsung MDC Chain.SendNext okToSend is False.");
+            processlogic();
+        }
+        trace("Samsung MDC Chain.SendNext Deactivating.");
+        inSend = 0;
+    }
+    else
+        trace("Samsung MDC Chain.SendNext inSend already active.");
+    trace("Samsung MDC Chain.SendNext Done");
+}
+
+FUNCTION AddToTxQueue(string cmd)
+{
+    txQ = txQ + cmd + CMD_QUEUE_TX_DELIMITER;
+    trace("Samsung MDC Chain.Added to TxQ:%s",cmd);
+    trace("Samsung MDC Chain.TxQ Len:%u",len(txQ));
+    if (inSend = 0)
+        SendNext();
+    else
+        trace("Samsung MDC Chain.AddToTxQueue inSend already true.");
+}
+STRING_FUNCTION SendCmdString(integer ndx,integer cmd,integer value)
+{
+    integer id;
+    integer checksum;
+    integer x;
+    string str[6];
+
+    id = UnitData[ndx].id;
+    checksum = cmd + id + 1 + value;
+    checksum = checksum & 0xFF;
+    makestring(str,"\xAA%c%c\x01%c%c",cmd,id,value,checksum);    
+    AddToTxQueue(str);
+}
+
+STRING_FUNCTION SendPollString(integer ndx,integer cmd)
+{
+    integer id;
+    integer checksum;
+    string str[5];
+
+    id = UnitData[ndx].id;
+    checksum = cmd + id;
+    checksum = checksum & 0xFF;
+    makestring(str,"\xAA%c%c\x00%c",cmd,id,checksum);
+    AddToTxQueue(str);
+}
+
+FUNCTION UpdateFb(integer x)
+{    
+    if (enable[x])
+    {
+        power_on_fb[x]          = UnitData[x].power > 0;
+        power_off_fb[x]         = UnitData[x].power && 0;
+        volume_mute_on_fb[x]    = UnitData[x].mute > 0;
+        volume_mute_off_fb[x]   = UnitData[x].mute && 0;
+        input_pc_fb[x]          = UnitData[x].input = INPUT_VAL_PC     ; 
+        input_bnc_fb[x]         = UnitData[x].input = INPUT_VAL_BNC    ;
+        input_dvi_fb[x]         = UnitData[x].input = INPUT_VAL_DVI    ;
+        input_av_fb[x]          = UnitData[x].input = INPUT_VAL_AV     ;
+        input_svideo_fb[x]      = UnitData[x].input = INPUT_VAL_SVIDEO ;
+        input_component_fb[x]   = UnitData[x].input = INPUT_VAL_COMPONENT; 
+        input_magicnet_fb[x]	= UnitData[x].input = INPUT_VAL_MAGICNET;
+        input_dvi_video_fb[x]   = UnitData[x].input = INPUT_VAL_DVI_VIDEO;
+        input_rf_fb[x]          = UnitData[x].input = INPUT_VAL_RF     ;
+        input_dtv_fb[x]         = UnitData[x].input = INPUT_VAL_DTV    ;
+        input_hdmi_fb[x]        = UnitData[x].input = INPUT_VAL_HDMI   ;
+        input_hdmi_pc_fb[x]		= UnitData[x].input = INPUT_VAL_HDMI_PC;
+        input_hdmi_2_fb[x]      = UnitData[x].input = INPUT_VAL_HDMI_2 ;
+    }
+    else
+    {
+        power_on_fb[x]          = 0;
+        power_off_fb[x]         = 0;
+        volume_mute_on_fb[x]    = 0;
+        volume_mute_off_fb[x]   = 0;            
+        input_pc_fb[x]          = 0;         
+        input_bnc_fb[x]         = 0;
+        input_dvi_fb[x]         = 0;
+        input_av_fb[x]          = 0;
+        input_svideo_fb[x]      = 0;
+        input_component_fb[x]   = 0;    
+        input_magicnet_fb[x]	= 0;
+        input_dvi_video_fb[x]   = 0;
+        input_rf_fb[x]          = 0;
+        input_dtv_fb[x]         = 0;
+        input_hdmi_fb[x]        = 0;
+        input_hdmi_pc_fb[x]		= 0;
+        input_hdmi_2_fb[x]      = 0;
+    }
+}
+
+FUNCTION UdpateVolumeFb(integer ndx)
+{
+    volume_fb[ndx] = UnitData[ndx].volume * 655535 / 100;
+}
+FUNCTION PausePolling(integer ndx)
+{
+    integer x;
+    for(x=1 to MAX_DISPLAYS)
+        UnitData[x].pausepolling = 5;
+    //UnitData[ndx].pausepolling = 5;
+}
+FUNCTION StartPoll()
+{
+    integer x;
+    string cmd[20];
+    integer anyenabled;
+
+    trace("Samsung MDC Chain. StartPoll");
+
+    if (inPolling = 0)
+    {
+        anyenabled = 1;
+        while(anyenabled > 0)
+        {
+            inPolling = 1;
+            anyenabled = 0;
+            for(x=1 to MAX_DISPLAYS)
+            {
+                if (enable[x])
+                {
+                    anyenabled = 1;                    
+                    if (UnitData[x].pausepolling = 0)
+                    {
+                        UnitData[x].poll = UnitData[x].poll + 1;
+                        trace("Samsung MDC Chain. Poll[%u]=%u",x,UnitData[x].poll);
+                        if (UnitData[x].poll = 1)
+                            SendPollString(x,CMD_POLL_STATUS);
+                        else if (UnitData[x].poll > 4)
+                            UnitData[x].poll = 0;                            
+                    }
+                    else
+                        UnitData[x].pausepolling = UnitData[x].pausepolling - 1;                
+                    delay(100);
+                }
+            }            
+        }
+        inPolling = 0;
+    }
+    else
+        trace("Samsung MDC Chain. Poll already started");
+}
+
+CHANGE rx$
+{    
+    integer rlen;
+    integer ack;
+    integer cmd;
+    integer x;
+    integer id;
+    integer checksum;
+    integer data[10];
+    string trash[10];
+    integer posH;
+
+    while(find("\xAA\xFF",rx$)>0)
+    {
+        trace("Samsung MDC Chain. Header Received.");
+        posH = find("\xAA\xFF",rx$);
+        if (len(rx$) > (posH + 3)) //check we receive ID and length byte
+        {                        
+            trash = remove("\xAA\xFF",rx$);
+            id = getc(rx$);
+            trace("Samsung MDC Chain. ID Received: %u",id);
+            rlen = getc(rx$);
+            trace("Samsung MDC Chain. Length Received: %u",rlen);
+            ack = getc(rx$);
+            trace("Samsung MDC Chain. Ack Received: %u",ack);
+            cmd = getc(rx$);
+            trace("Samsung MDC Chain. Cmd Received: %u",cmd);
+            for(x=1 to (rlen - 2))
+            {
+                data[x] = getc(rx$);
+                trace("Samsung MDC Chain Data %u Received:%u",x,data[x]);
+            }
+            checksum = getc(rx$);        
+
+            if (ack = 65)
+            {
+                for(x=1 to MAX_DISPLAYS)
+                {
+                    if (UnitData[x].id = id)
+                    {
+                        trace("Samsung MDC Chain.Updating Unit %u",x);
+                        switch(cmd)
+                        {
+                            case(CMD_POLL_STATUS)://status
+                            {
+                                UnitData[x].power = data[1];
+                                Unitdata[x].poweractual = data[1];
+                                if (persistent_power)
+                                {
+                                    if (UnitData[x].power <> UnitData[x].lastpower)
+                                    {
+                                        SendCmdString(x,CMD_POWER,UnitData[x].lastpower);
+                                    }
+                                }
+                                
+                                UnitData[x].mute = data[3];
+                                UnitData[x].input = data[4];
+                                //UnitData[x].aspect = data[5];
+                                UpdateFb(x);
+                                if (volume_up[x] = 0 && volume_down[x] = 0)
+                                {
+                                    UnitData[x].volume = data[2];
+                                    UdpateVolumeFb(x);
+                                }                                    
+                            }
+                            case(CMD_POWER): //power
+                            {
+                                UnitData[x].power = data[1];
+                                UpdateFb(x);
+                            }
+                            case(CMD_VOLUME): //volume
+                            {                                
+                                if (volume_up[x] = 0 && volume_down[x] = 0)
+                                {
+                                    UnitData[x].volume = data[1];
+                                    UdpateVolumeFb(x);
+                                }
+                            }
+                            case(CMD_MUTE): //mute
+                            {
+                                UnitData[x].mute = data[1];
+                                UpdateFb(x);
+                            }
+                            case (CMD_INPUT):
+                            {
+                                UnitData[x].input = data[1];
+                                UpdateFb(x);
+                            }
+                        }
+                    }
+                }
+            }                
+            else
+                trace("Samsung MDC Chain. Ack not Received.");
+            
+            okToSend = 1;
+        }
+        else
+            trace("Samsung MDC Chain. Received Insufficient String Length. Received:%s",rx$);
+    }
+}
+
+PUSH enable
+{
+    if (inPolling = 0)
+        StartPoll();
+}
+
+PUSH all_on
+{
+	tx$ = "\xAA\x11\xFE\x01\x01\x11";
+	PausePolling(0);
+}
+PUSH all_off
+{
+	tx$ = "\xAA\x11\xFE\x01\x00\x10";
+	PausePolling(0);
+}
+
+PUSH power_on
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    UnitData[ndx].power = 1;
+    SendCmdString(ndx,CMD_POWER,1);
+    UpdateFb(ndx);
+}
+PUSH power_off
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    UnitData[ndx].power = 0;
+    SendCmdString(ndx,CMD_POWER,0);
+    UpdateFb(ndx);
+}
+PUSH power_toggle
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    if (UnitData[ndx].power = 0)
+    {
+        UnitData[ndx].power = 1;
+        SendCmdString(ndx,CMD_POWER,1);
+    }
+    else
+    {
+        UnitData[ndx].power = 0;
+        SendCmdString(ndx,CMD_POWER,0);
+    }
+    UpdateFb(ndx);
+}
+PUSH volume_up
+{
+    integer ndx;
+    integer vol;
+    ndx = getlastmodifiedarrayindex();
+    while(volume_up[ndx])
+    {
+        PausePolling(ndx);
+        UnitData[ndx].volume = UnitData[ndx].volume + 1;
+        if (UnitData[ndx].volume >= 100)
+            UnitData[ndx].volume = 100;
+        SendCmdString(ndx,CMD_VOLUME,UnitData[ndx].volume);
+        UdpateVolumeFb(ndx);
+        DELAY(TX_SPEED);        
+    }
+}
+PUSH volume_down
+{
+    integer ndx;
+    integer vol;
+    ndx = getlastmodifiedarrayindex();
+    while(volume_down[ndx])
+    {
+        PausePolling(ndx);
+        if (UnitData[ndx].volume > 0)
+            vol = UnitData[ndx].volume - 1;
+        else
+            vol = 0;
+        SendCmdString(ndx,CMD_VOLUME,vol);
+        UdpateVolumeFb(ndx);
+        DELAY(TX_SPEED);
+    }
+}
+PUSH volume_mute_on
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    UnitData[ndx].mute = 1;
+    SendCmdString(ndx,CMD_MUTE,1);
+    UpdateFb(ndx);
+}
+PUSH volume_mute_off
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    UnitData[ndx].mute = 0;
+    SendCmdString(ndx,CMD_MUTE,0);
+    UpdateFb(ndx);    
+}
+PUSH volume_mute_toggle
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    if (UnitData[ndx].mute = 0)
+    {
+        UnitData[ndx].mute = 1;
+        SendCmdString(ndx,CMD_MUTE,1);
+    }
+    else
+    {
+        UnitData[ndx].mute = 0;
+        SendCmdString(ndx,CMD_MUTE,0);
+    }
+    UpdateFb(ndx);
+}
+PUSH input_pc
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);    
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_PC);
+    UnitData[ndx].input = INPUT_VAL_PC;
+    UnitData[ndx].lastinput = INPUT_VAL_PC;
+    UpdateFb(ndx);
+}
+PUSH input_bnc
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_BNC);
+    UnitData[ndx].input = INPUT_VAL_BNC;
+    UnitData[ndx].lastinput = INPUT_VAL_BNC;
+    UpdateFb(ndx);
+}
+PUSH input_dvi
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_DVI);
+    UnitData[ndx].input = INPUT_VAL_DVI;
+    Unitdata[ndx].lastinput = INPUT_VAL_DVI;
+    UpdateFb(ndx);
+}
+PUSH input_av
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_AV);
+    UnitData[ndx].input = INPUT_VAL_AV;
+    UnitData[ndx].lastinput = INPUT_VAL_AV;
+    UpdateFb(ndx);
+}
+PUSH input_svideo
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_SVIDEO);
+    UnitData[ndx].input = INPUT_VAL_SVIDEO;
+    UnitData[ndx].lastinput = INPUT_VAL_SVIDEO;
+    UpdateFb(ndx);
+}
+PUSH input_component
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_COMPONENT);
+    UnitData[ndx].input = INPUT_VAL_COMPONENT;
+    UnitData[ndx].lastinput = INPUT_VAL_COMPONENT;
+    UpdateFb(ndx);
+}
+PUSH input_magicnet
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_MAGICNET);
+    UnitData[ndx].input = INPUT_VAL_MAGICNET;
+    UnitData[ndx].lastinput = INPUT_VAL_MAGICNET;
+    UpdateFb(ndx);
+}
+PUSH input_dvi_video
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_DVI_VIDEO);
+    UnitData[ndx].input = INPUT_VAL_DVI_VIDEO;
+    UnitData[ndx].lastinput = INPUT_VAL_DVI_VIDEO;
+    UpdateFb(ndx);
+}
+PUSH input_rf
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_RF);
+    UnitData[ndx].input = INPUT_VAL_RF;
+    UnitData[ndx].lastinput = INPUT_VAL_RF;
+    UpdateFb(ndx);
+}
+PUSH input_dtv
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_DTV);
+    UnitData[ndx].input = INPUT_VAL_DTV;
+    UnitData[ndx].lastinput = INPUT_VAL_DTV;
+    UpdateFb(ndx);
+}
+PUSH input_hdmi
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_HDMI);
+    UnitData[ndx].input = INPUT_VAL_HDMI;
+    UnitData[ndx].lastinput = INPUT_VAL_HDMI;
+    UpdateFb(ndx);
+}
+PUSH input_hdmi_pc
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_HDMI_PC);
+    UnitData[ndx].input = INPUT_VAL_HDMI_PC;
+    UnitData[ndx].lastinput = INPUT_VAL_HDMI_PC;
+    UpdateFb(ndx);
+}
+PUSH input_hdmi_2
+{
+    integer ndx;
+    ndx = getlastmodifiedarrayindex();
+    PausePolling(ndx);
+    SendCmdString(ndx,CMD_INPUT,INPUT_VAL_HDMI_2);
+    UnitData[ndx].input = INPUT_VAL_HDMI_2;
+    UnitData[ndx].lastinput = INPUT_VAL_HDMI_2;
+    UpdateFb(ndx);
+}
+
+FUNCTION Main()
+{
+    integer x;
+    txQ = "";
+    inSend = 0;
+    okToSend = 1;
+    inTxTimer = 0;
+    inPolling = 0;
+    for(x=1 to MAX_DISPLAYS)
+        UnitData[x].id = displayID[x];
+    WaitForInitializationComplete();
+}

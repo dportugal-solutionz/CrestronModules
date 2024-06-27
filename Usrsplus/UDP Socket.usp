@@ -1,0 +1,112 @@
+/*
+    By Daniel Portugal
+*/
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+
+DIGITAL_INPUT
+    _skip_,
+    _skip_,
+    enable;
+
+ANALOG_INPUT
+    set_port;
+
+STRING_INPUT
+    set_ip_address$[32],
+    set_port$[5],
+    tx[255];
+
+DIGITAL_OUTPUT
+    _skip_,
+    _skip_,
+    connected;
+STRING_OUTPUT
+    _skip_,
+    _skip_,
+    _skip_,
+    rx;
+
+STRING_PARAMETER IpAddress[32];
+INTEGER_PARAMETER Port;
+
+INTEGER nPort;
+STRING sIpAddress[32];
+UDP_SOCKET udpSocket[255];
+
+FUNCTION Disconnect()
+{
+    SIGNED_INTEGER result;
+    if (connected > 0)
+    {
+        result = SocketUDP_Disable(udpSocket);
+        if (result = 0)
+            connected = 0;
+    }
+}
+FUNCTION Connect()
+{
+    SIGNED_INTEGER result;
+
+    if (connected = 1)
+    {
+        Disconnect();
+        delay(100);
+    }
+    if (len(sIpAddress) > 0 && nPort > 0 && enable && connected = 0)
+    {
+        result = SocketUDP_Enable(udpSocket, sIpAddress, nPort);
+        if (result = 0)
+            connected = 1;
+    }
+}
+
+PUSH enable
+{
+    Connect();
+}
+RELEASE enable
+{
+    Disconnect();
+}
+
+CHANGE set_port
+{
+    nPort = set_port;
+    Connect();
+}
+CHANGE set_port$
+{
+    nPort = atoi(set_port$);
+    Connect();
+}
+
+CHANGE set_ip_address$
+{
+    sIpAddress = set_ip_address$;
+    Connect();
+}
+
+CHANGE tx
+{
+    if (enable && connected)
+    {
+        SocketSend(udpSocket,tx);
+    }
+}
+
+SOCKETRECEIVE udpSocket
+{
+    rx = udpSocket.SocketRxBuf;
+    ClearBuffer(udpSocket.SocketRxBuf);
+}
+
+FUNCTION Main()
+{
+    nPort = Port;
+    sIpAddress = IpAddress;
+    connected = 0;
+    WaitForInitializationComplete();
+}

@@ -1,0 +1,338 @@
+/*
+Dealer Name: Solutionz
+System Name:
+System Number:
+Programmer: Daniel Portugal
+Comments:
+*/
+
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+
+#DEFINE_CONSTANT MAX_DIG 255
+#DEFINE_CONSTANT MAX_ANA 255
+#DEFINE_CONSTANT MAX_SER 255
+
+#DIGITAL_EXPAND InputsWithOutputs
+#ANALOG_SERIAL_EXPAND InputsWithOutputs
+
+#HELP_BEGIN
+Reads and writes to a json file.
+This module cannot create a json file.
+The file must be a valid json file.
+Once it has been read, the value can then be changed.
+The outputs will only be updated when the file is read.
+Only the json paths specified will be affected. The rest of the JSON file will be kept the same.
+However it may be that it gets re-written in a different order due to parsing.
+
+
+INPUTS
+====================
+read_file		  		reads the json file, parses it, and loads into memory. The outputs are then updated for their respective values				
+write_file		  		writes the json object to a file.
+write_on_change	  		if high, any changes to the dInput, aInput, sInput cues, will cause the file to be written a second later.
+
+dInput			  		digital value to change the jsonObject with their respective json_d_path, this will be written as a true or false in the JSON file.
+
+aInput					analog value to change the jsonObject with their respective json_a_path, this will be written as an integer in the JSON file.
+						65535d will be written as -1 in the JSON.
+						
+sInput					serial value to cahnge the jsonObject with their respective json_s_path, this will be writtena s a string in the JSON file.
+
+
+
+OUTPUTS
+====================
+file_read_success		high when file is read successfully. Parsing errors may still occur. 
+file_read_error			high when an exception has been encountered while trying to read the file
+file_write_success 		high when the jsonObject is written to the file successfully.
+file_write_error		high when an exception has been encountered while tryign to write the jsonObject to a file.
+file_name_found			the file name found that was read.
+
+dOutput					the true (high) / false (low) value found in the json file when read for the json_d_path.
+aOutput					the integer value found in the json file when read for the json_a_path.
+sOutput					the string value found in the json file when read for the json_s_path.
+
+PARAMETERS
+====================
+directory  		the directory in the processor that contains the json file                  
+filepattern		the filename or file pattern that is the json file
+
+json_d_path		the JSONPath string to be used to read and write the values that is driven by dOutput and dInput
+json_a_path		the JSONPath string to be used to read and write the values that is driven by aOutput and aInput
+json_s_path		the JSONPath string to be used to read and write the values that is driven by sOutput and sInput
+
+
+Here is a JSONPath tester:
+	https://jsonpath.curiousconcept.com/
+
+To learn more about JSONPath: 
+	https://goessner.net/articles/JsonPath/
+
+
+Example:
+====================
+Json file as follows:
+{
+	"ObjectA":
+	{
+		"DigitalKeyAlpha": true,
+		"AnalogKeyBeta":-3,
+		"StringKeyEpsilon":"gamma"
+	},
+	"ArrayB":[
+		"Z",
+		"X",
+		"y"
+	],
+	"ObjectC":
+	{
+		"SubComponent":
+		{
+			"Child":"sister",
+			"Siblings":[-2,3]
+		}
+	}
+}
+
+when ReadFile goes high and the following parameters
+json_d_path[1] = "ObjectA.DigtialKeyAlpha", then dOutput[1] = high/1
+json_a_path[1] = "ObjectA.AnalogKeyBeta", then aOutput[1] = 65533d (-3d)
+json_s_path[1] = "ObjectA.StringKeyEpsilon", then sOutput[1] = "gamma"
+json_a_path[2] = "ObjectC.SubComponent.Siblings[0]", then aOutput[2] = -2
+json_s_path[2] = "ArrayB[2]", then sOutput[2] = "y"
+
+
+when dInput[1] = low, will change the JSON such that the json with that key will have the value false
+{
+	"ObjectA":
+	{
+		"DigitalKeyAlpha": false,
+		....
+	
+
+
+#HELP_END
+
+digital_input
+     _skip_ //skip first 2 params
+    ,_skip_ //skip first 2 params
+    ,read_file
+    ,write_file
+    ,write_on_change
+    ,_skip_
+    ;
+digital_output
+    _skip_ //skip first 2 params
+    ,_skip_ //skip first 2 params
+    ,file_read_success
+    ,file_read_error
+    ,file_write_success
+    ,file_write_error
+    ;
+
+string_input
+    _skip_,_skip_,_skip_;
+
+string_output
+    _skip_,
+    file_name_found,
+    _skip_;
+
+digital_input
+    _skip_,
+    dInput[MAX_DIG];
+
+analog_input
+    _skip_,
+    aInput[MAX_ANA];
+
+string_input
+    _skip_,
+    sInput[MAX_SER][255];
+
+digital_output
+    _skip_,
+    dOutput[MAX_DIG];
+
+analog_output
+    _skip_,
+    aOutput[MAX_ANA];
+
+string_output
+    _skip_,
+    sOutput[MAX_SER];
+
+string_parameter directory[255];
+string_parameter filepattern[100];
+string_parameter _skip_,_skip_,_skip_,_skip_; //skip digital inputs
+string_parameter _skip_;
+string_parameter json_d_path[MAX_DIG][255];
+string_parameter _skip_,_skip_,_skip_; //skip string output
+string_parameter _skip_;
+string_parameter json_a_path[MAX_ANA][255];
+string_parameter _skip_;
+string_parameter json_s_path[MAX_SER][255];
+
+#BEGIN_PARAMETER_PROPERTIES directory
+   propDefaultUnit = unitString;
+   propDefaultValue = "/user";
+   propValidUnits = unitString;
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES filepattern
+   propDefaultUnit = unitString;
+   propDefaultValue = "*.json";
+   propValidUnits = unitString;
+#END_PARAMETER_PROPERTIES
+
+#INCLUDEPATH "C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug"
+#USER_SIMPLSHARP_LIBRARY "JsonFileReadWrite"
+
+integer x;
+FileHandler JsonFile;
+
+//------------------------------------------------------------------------------
+eventhandler ReadSuccessHandler(FileHandler sender, EventArgs args)
+{
+	file_name_found = JsonFile.Filename;
+    file_read_error = 0;
+    file_read_success = 1;
+}
+//------------------------------------------------------------------------------
+eventhandler ReadFailHandler(FileHandler sender, EventArgs args)
+{
+    file_read_success = 0;
+    file_read_error = 1;
+}
+//------------------------------------------------------------------------------
+eventhandler WriteSuccessHandler(FileHandler sender, EventArgs args)
+{
+    file_write_error = 0;
+    file_write_success = 1;
+}
+//------------------------------------------------------------------------------
+eventhandler WriteFailHandler(FileHandler sender, EventArgs args)
+{
+    file_write_success = 0;
+    file_write_error = 1;
+}
+
+callback function cbDigitalValueFb(integer index, integer value)
+{
+    if (index > 0 && index <= MAX_DIG)
+        dOutput[index] = value;
+}
+
+callback function cbAnalogValueFb(integer index, integer value)
+{
+    if (index > 0 && index <= MAX_ANA)
+        aOutput[index] = value;
+}
+
+callback function cbStringValueFb(integer index, string value)
+{
+    if (index > 0 && index <= MAX_SER)
+        sOutput[index] = value;
+}
+
+
+
+//------------------------------------------------------------------------------
+THREADSAFE PUSH read_file
+{
+    try
+    {
+    	file_read_success = 0;
+	    file_read_error = 0;
+        JsonFile.ReadFile();
+    }
+    catch
+    {
+        Print("[Json Reader-Writer] Read Error. %s", GetExceptionMessage());
+    }
+}
+
+//------------------------------------------------------------------------------
+PUSH write_file
+{
+    try
+    {
+	    file_write_success = 0;
+	    file_write_error = 0;    
+	    JsonFile.WriteFile();
+    }
+    catch
+    {
+        Print("[Json Reader-Writer] Write Error. %s", GetExceptionMessage());
+    }
+}
+
+//------------------------------------------------------------------------------
+PUSH write_on_change
+RELEASE write_on_change
+{
+    JsonFile.WriteOnChange = write_on_change;
+}
+//------------------------------------------------------------------------------
+PUSH dInput
+RELEASE dInput
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+    JsonFile.SetDigitalValue(json_d_path[x], dInput[x]);
+}
+//------------------------------------------------------------------------------
+CHANGE aInput
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+    JsonFile.SetAnalogValue(json_a_path[x], aInput[x]);
+}
+//------------------------------------------------------------------------------
+CHANGE sInput
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+    JsonFile.SetStringValue(json_s_path[x], sInput[x]);
+}
+//------------------------------------------------------------------------------
+FUNCTION Main()
+{
+    integer x;
+    WaitForInitializationComplete();
+    JsonFile.DebugOn();
+    //JsonFile.DebugOff();
+    JsonFile.Directory = directory;
+    JsonFile.FilePattern = filepattern;
+
+    RegisterEvent(JsonFile, OnReadSuccessful, ReadSuccessHandler);
+    RegisterEvent(JsonFile, OnReadFailed, ReadFailHandler);
+    RegisterEvent(JsonFile, OnWriteSuccessful, WriteSuccessHandler);
+    RegisterEvent(JsonFile, OnWriteFailed, WriteFailHandler);
+
+    RegisterDelegate(JsonFile, DigitalValueFb, cbDigitalValueFb);
+    RegisterDelegate(JsonFile, AnalogValueFb, cbAnalogValueFb);
+    RegisterDelegate(JsonFile, StringValueFb, cbStringValueFb);
+
+
+    for(x = 1 to MAX_DIG)
+    {
+        if (len(json_d_path[x]) > 0)
+            JsonFile.AddDigitalPath(x, json_d_path[x]);
+    }
+
+    for(x = 1 to MAX_ANA)
+    {
+        if (len(json_a_path[x]) > 0)
+            JsonFile.AddAnalogPath(x, json_a_path[x]);
+    }
+
+    for(x = 1 to MAX_SER)
+    {
+        if (len(json_s_path[x]) > 0)
+            JsonFile.AddSerialPath(x, json_s_path[x]);
+    }
+}

@@ -1,0 +1,152 @@
+/*******************************************************************************************
+  SIMPL+ Module Information
+  (Fill in comments below)
+*******************************************************************************************/
+/*
+Dealer Name:
+System Name:
+System Number:
+Programmer: Daniel Portugal
+Comments:
+v4.1 increased buffersize to 10240
+v4 added port as an input
+v3 adjusted i/o alignment
+*/
+
+/*******************************************************************************************
+  Compiler Directives
+  (Uncomment and declare compiler directives as needed)
+*******************************************************************************************/
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#HELP_BEGIN
+TCP Client
+Receive buffer size is 5120.
+Parameter IP address will be used at boot.
+If ipaddress string input is received then parameter ip address will be overriden.
+
+#HELP_END
+
+
+DIGITAL_INPUT
+	_skip_,
+	_skip_,
+	connect,
+	enable_reconnect
+	;
+ANALOG_INPUT
+    port
+    ;
+STRING_INPUT
+	ip_address[50]
+    ,port$[5]
+	,tx[2058]
+	;
+
+DIGITAL_OUTPUT
+	_skip_,
+	_skip_,
+	connected;
+ANALOG_OUTPUT
+	status;
+STRING_OUTPUT
+	_skip_,
+	rx;
+
+/*******************************************************************************************
+  SOCKETS
+  (Uncomment and define socket definitions as needed)
+*******************************************************************************************/
+
+STRING_PARAMETER ipaddress[50];
+INTEGER_PARAMETER port_number;
+
+#BEGIN_PARAMETER_PROPERTIES port_number
+   propValidUnits = unitDecimal;
+   propDefaultUnit = unitDecimal;
+   propDefaultValue = 23d;
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES ipaddress
+   propValidUnits = unitString;
+   propDefaultUnit = unitString;
+   propDefaultValue = "1.2.3.4";
+#END_PARAMETER_PROPERTIES
+
+STRING ip[50];
+INTEGER nPort;
+TCP_CLIENT tcpClient[10240];
+
+
+/*******************************************************************************************
+  Event Handlers
+*******************************************************************************************/
+
+PUSH connect
+{
+	signed_integer r;
+	r = SocketConnectClient(tcpClient,ip,nPort,enable_reconnect);
+}
+
+RELEASE connect
+{
+	signed_integer r;
+	r = SocketDisconnectClient(tcpClient);
+}
+
+CHANGE ip_address
+{
+	ip = ip_address;
+}
+
+
+CHANGE tx
+{
+	if (tcpClient.SocketStatus = 2)
+	{
+		SocketSend(tcpClient,tx);
+	}
+}
+
+CHANGE port$
+{
+    nPort = atoi(port$);
+}
+CHANGE port
+{
+    nPort = port;
+}
+
+SOCKETCONNECT tcpClient
+{
+	connected = 1;
+}
+
+SOCKETDISCONNECT tcpClient
+{
+	connected = 0;
+}
+SOCKETRECEIVE tcpClient
+{
+	rx = tcpClient.SocketRxBuf;
+	clearbuffer(tcpClient.SocketRxBuf);
+}
+
+
+SOCKETSTATUS tcpClient
+{
+	status = tcpClient.SocketStatus;
+}
+
+
+/*******************************************************************************************
+  Main()
+*******************************************************************************************/
+
+Function Main()
+{
+    ip = ipaddress; //copy parameter.
+    nPort = port_number;
+    WaitForInitializationComplete();
+}

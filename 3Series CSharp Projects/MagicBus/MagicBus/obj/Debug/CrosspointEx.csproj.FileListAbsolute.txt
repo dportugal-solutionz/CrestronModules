@@ -1,0 +1,9 @@
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\bin\Debug\CrosspointEx.dll
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\bin\Debug\CrosspointEx.pdb
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\bin\Debug\SimplSharpCustomAttributesInterface.dll
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\bin\Debug\SimplSharpHelperInterface.dll
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\bin\Debug\SimplSharpReflectionInterface.dll
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\bin\Debug\Newtonsoft.Json.Compact.dll
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\obj\Debug\ResolveAssemblyReference.cache
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\obj\Debug\CrosspointEx.dll
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\obj\Debug\CrosspointEx.pdb

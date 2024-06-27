@@ -1,0 +1,557 @@
+/*
+
+*/
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#DEFINE_CONSTANT MAX_CAMERAS 4
+#DEFINE_CONSTANT MAX_PRESETS 8
+#DEFINE_CONSTANT PTZDELAY 10
+
+#HELP_BEGIN
+baud rate: 38400,N,8,1
+https://res.cloudinary.com/avd/image/upload/v133625556/Resources/Vaddio/Cameras/Operation/411-0041-35_Rev_D_EasyIP_System_Complete_Manual.pdf
+#HELP_END
+
+
+DIGITAL_INPUT
+     _SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,camera_1
+    ,camera_2
+    ,camera_3
+    ,camera_4
+    ,i_power_on
+    ,i_power_off
+    ,i_power_toggle
+    ,tilt_up
+    ,tilt_down
+    ,pan_left
+    ,pan_right
+    ,zoom_in
+    ,zoom_out
+    ,enable_polling
+    ,force_disconnect
+    ,_SKIP_
+    ,debug_on
+    ,_SKIP_
+    ,power_on[MAX_CAMERAS]
+    ,power_off[MAX_CAMERAS]
+    ,recall_preset[MAX_PRESETS]
+    ,save_preset[MAX_PRESETS]
+    ;
+
+ANALOG_INPUT
+    panspeed_pct,
+    tiltspeed_pct,
+    zoomspeed_pct
+    ;
+
+STRING_INPUT
+    ip_address$[64],
+    username$[30],
+    password$[30],
+	pan_speed$[5],
+	tilt_speed$[5],
+	zoom_speed$[5];
+
+BUFFER_INPUT
+    rx$[500];
+
+DIGITAL_OUTPUT
+    _SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,camera_1_fb
+    ,camera_2_fb
+    ,camera_3_fb
+    ,camera_4_fb
+    ,i_power_on_fb
+    ,i_power_off_fb
+    ,camera_power_on_fb[MAX_CAMERAS]
+    ,camera_power_off_fb[MAX_CAMERAS]
+    ;
+
+ANALOG_OUTPUT
+    panspeed_pct_fb
+    ,tiltspeed_pct_fb
+    ,zoomspeed_pct_fb
+    ;
+
+STRING_OUTPUT
+    tx$,
+    debug$
+    ;
+
+STRING_PARAMETER IpAddress[25], Username[30], Password[30];
+
+INTEGER_PARAMETER pan_speed,tilt_speed,zoom_speed;
+
+#BEGIN_PARAMETER_PROPERTIES tilt_speed
+    propValidUnits = unitDecimal;
+    propDefaultUnit = unitDecimal;
+    propBounds = 0d , 20d;
+    propDefaultvalue = 10d;
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES pan_speed
+    propValidUnits = unitDecimal;
+    propDefaultUnit = unitDecimal;
+    propBounds = 1d , 24d;
+    propDefaultvalue = 12d;
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES zoom_speed
+    propValidUnits = unitDecimal;
+    propDefaultUnit = unitDecimal;
+    propBounds = 1d , 7d;
+    propDefaultvalue = 2d;
+#END_PARAMETER_PROPERTIES
+
+string ip[64],user[30],pw[30];
+INTEGER selectedcamera;
+INTEGER powerstate[MAX_CAMERAS];
+INTEGER panspeed, tiltspeed,zoomspeed;
+TCP_CLIENT tcpClient[200];
+SIGNED_INTEGER tcpStatus;
+INTEGER polled;
+
+FUNCTION Connect()
+{
+    if (len(ip) = 0)
+    {
+        GenerateUserWarning("[Vaddio EasyIP Mixer] Cannot connect to blank ip address");
+        return;
+    }
+    SocketConnectClient(tcpClient,ip,23,0);
+}
+
+FUNCTION Send(integer camnumber, string cmd)
+{
+    string temp[200];
+
+    makestring(temp, "camera %u %s\x0D", camnumber, cmd);
+
+    if (camnumber = 0)
+    {
+        makestring(temp, "%s\x0D", cmd);
+    }
+
+    tx$ = temp;
+    if (tcpStatus = 1)
+    {
+        SocketSend(tcpClient, temp);
+    }
+}
+
+FUNCTION UpdatePowerFb()
+{
+    integer x;
+    for(x = 1 to MAX_CAMERAS)
+    {
+        if (powerstate[x] > 0)
+        {
+            camera_power_off_fb[x] = 0;
+            camera_power_on_fb[x] = 1;
+        }
+        else
+        {
+            camera_power_on_fb[x] = 0;
+            camera_power_off_fb[x] = 1;
+        }
+    }
+    if (powerstate[selectedcamera] > 0)
+    {
+        i_power_off_fb = 0;
+        i_power_on_fb = 1;
+    }
+    else
+    {
+        i_power_on_fb = 0;
+        i_power_off_fb = 1;
+    }
+}
+FUNCTION UpdateSpeedFb()
+{
+    panspeed_pct_fb = panspeed * 65535 / 24;
+    tiltspeed_pct_fb = tiltspeed * 65535 / 20;
+    zoomspeed_pct_fb = zoomspeed * 65535 / 7;
+}
+
+FUNCTION UpdateSelectedCamera()
+{
+    switch(selectedcamera)
+    {
+        case (1):
+        {
+            camera_2_fb = 0;
+            camera_3_fb = 0;
+            camera_4_fb = 0;
+            camera_1_fb = 1;
+        }
+        case (2):
+        {
+            camera_1_fb = 0;
+            camera_3_fb = 0;
+            camera_4_fb = 0;
+            camera_2_fb = 1;
+        }
+        case (3):
+        {
+            camera_1_fb = 0;
+            camera_2_fb = 0;
+            camera_4_fb = 0;
+            camera_3_fb = 1;
+        }
+        case (4):
+        {
+            camera_1_fb = 0;
+            camera_2_fb = 0;
+            camera_3_fb = 0;
+            camera_4_fb = 1;
+        }
+    }
+    UpdatePowerFb();
+}
+
+FUNCTION ProcessRx(string rx)
+{
+    string trash[100];
+
+    switch(1)
+    {
+        case (find("login:", rx) >  0):
+        {
+            Send(0,user);
+        }
+        case  (find("Password:", rx) > 0):
+        {
+            Send(0,pw);
+        }
+        case (find("source:", rx) > 0):
+        {
+            trash = remove("input", rx);
+            selectedcamera = atoi(rx);
+            UpdateSelectedCamera();
+        }
+        case (find("standby:", rx) > 0):
+        {
+            trash = remove("standby:",rx);
+            if (find("on", rx) > 0)
+            {
+                powerstate[polled] = 1;
+                UpdatePowerFb();
+            }
+            if (find("off", rx) > 0)
+            {
+                powerstate[polled] = 0;
+                UpdatePowerFb();
+            }
+        }
+    }
+}
+
+PUSH camera_1
+{
+    selectedcamera = 1;
+    Send(0, "video source set input1\x0D");
+    UpdateSelectedCamera();
+}
+PUSH camera_2
+{
+    selectedcamera = 2;
+    Send(0, "video source set input2\x0D");
+    UpdateSelectedCamera();
+}
+PUSH camera_3
+{
+    selectedcamera = 3;
+    Send(0, "video source set input3\x0D");
+    UpdateSelectedCamera();
+}
+PUSH camera_4
+{
+    selectedcamera = 4;
+    Send(0, "video source set input4\x0D");
+    UpdateSelectedCamera();
+}
+
+PUSH i_power_on
+{
+    Send(selectedcamera, "standby off");
+    powerstate[selectedcamera] = 0;
+    UpdatePowerFb();
+}
+PUSH i_power_off
+{
+    Send(selectedcamera, "standby on");
+    powerstate[selectedcamera] = 1;
+    UpdatePowerFb();
+}
+PUSH i_power_toggle
+{
+    if (powerstate[selectedcamera] > 0)
+    {
+        Send(selectedcamera, "standby on");
+        UpdatePowerFb();
+    }
+    else
+    {
+        Send(selectedcamera, "standby off");
+        UpdatePowerFb();
+    }
+}
+PUSH power_on
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+    Send(x, "standby off");
+    powerstate[x] = 1;
+    UpdatePowerFb();
+}
+
+PUSH power_off
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+    Send(x, "standby on");
+    powerstate[x] = 0;
+    UpdatePowerFb();
+}
+
+
+PUSH tilt_up
+{
+    string cmd[30];
+    makestring(cmd, "tilt up %u", tiltspeed);
+    Send(selectedcamera, cmd);
+}
+PUSH tilt_down
+{
+    string cmd[30];
+    makestring(cmd, "tilt down %u", tiltspeed);
+    Send(selectedcamera, cmd);
+}
+RELEASE tilt_up
+RELEASE tilt_down
+{
+    Send(selectedcamera, "tilt stop");
+}
+
+
+PUSH pan_left
+{
+    string cmd[30];
+    makestring(cmd, "pan left %u", panspeed);
+    Send(selectedcamera, cmd);
+}
+PUSH pan_right
+{
+    string cmd[30];
+    makestring(cmd, "pan right %u", panspeed);
+    Send(selectedcamera, cmd);
+}
+RELEASE pan_left
+RELEASE pan_right
+{
+    Send(selectedcamera, "pan stop");
+}
+
+PUSH zoom_in
+{
+    string cmd[30];
+    makestring(cmd, "zoom in %u", zoomspeed);
+    Send(selectedcamera, cmd);
+}
+PUSH zoom_out
+{
+    string cmd[30];
+    makestring(cmd, "zoom out %u", zoomspeed);
+    Send(selectedcamera, cmd);
+}
+
+RELEASE zoom_in
+RELEASE zoom_out
+{
+    Send(selectedcamera, "zoom stop");
+}
+
+
+PUSH save_preset
+{
+    integer x;
+    string cmd[30];
+    x = getlastmodifiedarrayindex();
+    makestring(cmd, "preset store %u", x);
+    Send(selectedcamera, cmd);
+}
+
+PUSH recall_preset
+{
+    integer x;
+    string cmd[30];
+    x = getlastmodifiedarrayindex();
+    makestring(cmd, "preset recall %u", x);
+    Send(selectedcamera, cmd);
+}
+
+CHANGE panspeed_pct
+{
+    panspeed = panspeed_pct * 24 / 65535;
+    UpdateSpeedFb();
+}
+CHANGE tiltspeed_pct
+{
+    tiltspeed = tiltspeed_pct * 20 / 65535;
+    UpdateSpeedFb();
+}
+CHANGE zoomspeed_pct
+{
+    zoomspeed = zoomspeed_pct * 7 / 65535;
+    UpdateSpeedFb();
+}
+
+CHANGE pan_speed$ { panspeed = atoi(pan_speed$); UpdateSpeedFb(); }
+CHANGE tilt_speed$ { tiltspeed = atoi(tilt_speed$); UpdateSpeedFb(); }
+CHANGE zoom_speed$ { zoomspeed = atoi(zoom_speed$); UpdateSpeedFb(); }
+
+THREADSAFE CHANGE rx$
+{
+    string temp[200];
+
+    while(1)
+    {
+        try
+        {
+            temp = gather("\x0D", rx$);
+            temp = left(temp, len(temp) - 1);
+            ProcessRx(temp);
+        }
+        catch
+        {
+            clearbuffer(rx$);
+            break;
+        }
+    }
+}
+
+SOCKETRECEIVE tcpClient
+{
+    string temp[200];
+    temp = tcpClient.SocketRxBuf;
+    clearbuffer(tcpClient.SocketRxBuf);
+    if (find("\x0D", temp) > 0)
+    {
+        temp = remove("\x0D", temp);
+        temp = left(temp, len(temp) - 1);
+    }
+    ProcessRx(temp);
+}
+
+PUSH enable_polling
+{
+    integer x;
+    x = 0;
+    while(enable_polling)
+    {
+        x = x + 1;
+        switch(x)
+        {
+            case (1):
+            {
+                polled = 1;
+                Send(1, "standby get");
+            }
+            case (2):
+            {
+                polled = 2;
+                Send(2, "standby get");
+            }
+            case (3):
+            {
+                polled = 3;
+                Send(3, "standby get");
+            }
+            case (4):
+            {
+                polled = 4;
+                Send(4, "standby get");
+            }
+            case (5):
+            {
+                polled = 0;
+                Send(0, "video source get");
+            }
+            default:
+            {
+                polled = 0;
+                if (x >= 10)
+                {
+                    x = 0;
+                }
+            }
+        }
+        delay(100);
+    }
+}
+
+PUSH force_disconnect
+{
+    SocketDisconnectClient(tcpClient);
+}
+
+CHANGE ip_address$
+{
+    ip = ip_address$;
+    if (tcpStatus = 1)
+    {
+        SocketDisconnectClient(tcpClient);
+        delay(200);
+    }
+    Connect();
+}
+
+CHANGE username$
+{
+    user = username$;
+}
+CHANGE password$
+{
+    pw = password$;
+}
+
+SOCKETCONNECT tcpClient
+{
+    tcpStatus = 1;
+}
+
+SOCKETDISCONNECT tcpClient
+{
+    tcpStatus = 0;
+}
+
+FUNCTION Main()
+{
+    ip = IpAddress;
+    user = Username;
+    pw = Password;
+    panspeed = pan_speed;
+    tiltspeed = tilt_speed;
+    zoomspeed = zoom_speed;
+    selectedcamera = 1;
+
+    WaitForInitializationComplete();
+
+    UpdateSpeedFb();
+    UpdateSelectedCamera();
+
+    Connect();
+}

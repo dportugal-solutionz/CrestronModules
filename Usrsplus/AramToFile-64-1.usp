@@ -1,0 +1,279 @@
+/*******************************************************************************************
+  SIMPL+ Module Information
+  (Fill in comments below)
+*******************************************************************************************/
+/*
+Dealer Name:
+System Name:
+System Number:
+Programmer:
+Comments:
+*/
+
+/*******************************************************************************************
+  Compiler Directives
+  (Uncomment and declare compiler directives as needed)
+*******************************************************************************************/
+// #ENABLE_DYNAMIC
+// #SYMBOL_NAME ""
+// #HINT ""
+#DEFINE_CONSTANT MAX_DATA 64  
+#DEFINE_CONSTANT MAX_SELECTS 1  
+#DEFINE_CONSTANT MAXLINELENGTH 1000
+#DEFINE_CONSTANT EOL "\n"
+// #CATEGORY "" 
+#CATEGORY "9" // Memory
+// #PRINT_TO_TRACE
+// #DIGITAL_EXPAND 
+// #ANALOG_SERIAL_EXPAND 
+// #OUTPUT_SHIFT 
+// #HELP_PDF_FILE ""
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+// #ENCODING_ASCII
+// #ENCODING_UTF16
+// #ENCODING_INHERIT_FROM_PARENT
+// #ENCODING_INHERIT_FROM_PROGRAM
+
+#HELP_BEGIN
+ behaves like aram but saves to a file.   
+ file is written/read using Write/ReadIntegerArray
+#HELP_END
+
+
+/*******************************************************************************************
+  Include Libraries
+  (Uncomment and include additional libraries as needed)
+*******************************************************************************************/
+// #CRESTRON_LIBRARY ""
+// #USER_LIBRARY ""
+
+/*******************************************************************************************
+  DIGITAL, ANALOG and SERIAL INPUTS and OUTPUTS
+  (Uncomment and declare inputs and outputs as needed)
+*******************************************************************************************/
+DIGITAL_INPUT store,recall,select_data[MAX_SELECTS];
+ANALOG_INPUT  data_in[MAX_DATA];
+// STRING_INPUT 
+// BUFFER_INPUT 
+
+// DIGITAL_OUTPUT 
+ANALOG_OUTPUT data_out[MAX_DATA];
+// STRING_OUTPUT 
+
+/*******************************************************************************************
+  SOCKETS
+  (Uncomment and define socket definitions as needed)
+*******************************************************************************************/
+// TCP_CLIENT
+// TCP_SERVER
+// UDP_SOCKET
+
+/*******************************************************************************************
+  Parameters
+  (Uncomment and declare parameters as needed)
+*******************************************************************************************/
+// INTEGER_PARAMETER
+// SIGNED_INTEGER_PARAMETER
+// LONG_INTEGER_PARAMETER
+// SIGNED_LONG_INTEGER_PARAMETER
+STRING_PARAMETER filename[100];
+
+/*******************************************************************************************
+  Parameter Properties
+  (Uncomment and declare parameter properties as needed)
+*******************************************************************************************/
+
+#BEGIN_PARAMETER_PROPERTIES filename
+   propValidUnits = unitString;
+   propDefaultUnit = unitString;
+   // propBounds = lower_bound , upper_bound;
+   propDefaultValue = "\\user\\aram.dat";
+#END_PARAMETER_PROPERTIES
+
+/*******************************************************************************************
+  Structure Definitions
+  (Uncomment and define structure definitions as needed)
+  Note:  Be sure to initialize all declared STRING variables as needed
+         For example, in Function Main: struct.myString = "";
+*******************************************************************************************/
+/*
+STRUCTURE MyStruct1
+{
+};
+
+MyStruct1 struct;
+*/
+
+/*******************************************************************************************
+  Global Variables
+*******************************************************************************************/
+INTEGER data[MAX_SELECTS][MAX_DATA];     
+/*******************************************************************************************
+  Functions
+*******************************************************************************************/
+
+Function WriteFile()
+{   
+    SIGNED_INTEGER  nFileHandle, iErrorCode;
+	integer x,y;
+    string writebuffer[MAXLINELENGTH];
+	StartFileOperations();	
+	nFileHandle = FileOpen(filename, _O_WRONLY | _O_TEXT | _O_CREAT);
+	
+	IF (nFileHandle >= 0)	
+	{
+	    for(x = 1 TO MAX_SELECTS)
+        {
+            writebuffer = itoa(data[x][1]);       //write the first one.         
+            for(y = 2 to MAX_DATA)
+            {
+                makestring(writebuffer,"%s,%u",writebuffer,data[x][y]);
+            }                                                   
+            writebuffer = writebuffer + "\n";
+            iErrorCode = filewrite(nFileHandle,writebuffer,len(writebuffer)); 
+            if (iErrorCode < 0)
+                print("[%s]FileWrite Error:%d",filename,iErrorCode);
+                
+        }        
+        fileclose(nFileHandle);
+	}	
+	EndFileOperations();	
+}
+
+
+STRING_FUNCTION ReadLine(signed_integer handle)
+{
+	string buffer[MAXLINELENGTH], temp[MAXLINELENGTH];
+	integer found;
+	signed_long_integer filepos;
+	
+	#IF_DEFINED debug
+		trace ("\n@ReadLine:%ld",FILESEEK (handle,0,SEEK_CUR) );
+	#ENDIF
+	
+	found=0;
+	temp="";
+	buffer="";
+	while (found=0 && FILEEOF (handle)=0)
+	{
+		fileread(handle,buffer,MAXLINELENGTH);
+		found = find(EOL,buffer);
+	}
+	
+	if (found > 0)
+	{
+		temp = remove(EOL,buffer);
+		filepos = FILESEEK (handle,0,SEEK_CUR);					//get current location
+		FILESEEK (handle,filepos - len(buffer),SEEK_SET);		//set to new location
+		return (temp);
+	}
+	else
+	{
+		return (temp);
+	}
+}
+
+
+Function ReadFile()
+{       
+    SIGNED_INTEGER  nFileHandle, iErrorCode;
+    integer x,y;            
+    integer linesread;
+    string readbuffer[1000]; 
+    string value[8];
+    StartFileOperations();	
+	nFileHandle = FileOpen(filename, _O_RDONLY | _O_TEXT);	
+	IF (nFileHandle >= 0)	
+	{	
+        for(x = 1 to MAX_SELECTS)
+		{
+			readbuffer = ReadLine(nFileHandle);
+			readbuffer = left(readbuffer,len(readbuffer)-2); //remove CR LF
+            for(y = 1 to (MAX_DATA-1))
+            {
+                value = remove(",",readbuffer);
+                data[x][y] = atoi(value);
+            }
+            data[x][MAX_DATA] = atoi(readbuffer);
+		}
+        fileclose(nFileHandle);
+	}
+	EndFileOperations();	
+}
+
+
+/*******************************************************************************************
+  Event Handlers
+  (Uncomment and declare additional event handlers as needed)
+*******************************************************************************************/
+     
+PUSH store
+{
+    integer x,s;      
+    for(s=1 to MAX_SELECTS)
+    {
+        if (select_data[s] > 0)
+        {
+		    for(x=1 to MAX_DATA)
+		    {
+		        data[s][x] = data_in[x];
+		    } 
+        }        
+    }
+    WriteFile();
+}
+
+PUSH recall
+{
+     integer x,s;   
+      
+     //ReadFile();
+     for(s=1 to MAX_SELECTS)
+     {
+        if (select_data[s] > 0)
+        {
+		    for(x=1 to MAX_DATA)
+		    {
+		        data_out[x] = data[s][x];
+		    } 
+        }        
+     }
+}
+    
+PUSH select_data
+{          
+    integer s;
+    integer x;
+    s = getlastmodifiedarrayindex();             
+    if (recall)
+    {  
+        ReadFile();
+        for(x=1 to MAX_DATA)
+        {
+           data_out[x] = data[s][x];
+        }
+    } 
+    
+    if (store)
+    { 
+        for(x=1 to MAX_DATA)
+	    {
+	        data[s][x] = data_in[x];
+	    } 
+        WriteFile();
+    }
+}  
+
+/*******************************************************************************************
+  Main()
+*******************************************************************************************/
+
+Function Main()
+{   
+    ReadFile();
+    WaitForInitializationComplete();
+}
+
+

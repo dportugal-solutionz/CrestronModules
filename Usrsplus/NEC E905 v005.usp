@@ -1,0 +1,829 @@
+/*******************************************************************************************
+  SIMPL+ Module Information
+  (Fill in comments below)
+*******************************************************************************************/
+/*
+Dealer Name: Spinitar
+System Name: NEC E905/805
+System Number: 4.0.0
+Programmer: dp - edited by philip.kopyscinski@spinitar.com
+Comments:
+ v003 - fixed Set Mute
+ v004 - Added Option input source and Channel up/down controls
+ v005 - fixed threading and buffer runaways
+*/
+
+/*******************************************************************************************
+  Compiler Directives
+  (Uncomment and declare compiler directives as needed)
+*******************************************************************************************/
+// #ENABLE_DYNAMIC
+// #SYMBOL_NAME ""
+// #HINT ""
+// #DEFINE_CONSTANT
+// #CATEGORY "" 
+// #PRINT_TO_TRACE
+// #DIGITAL_EXPAND 
+// #ANALOG_SERIAL_EXPAND 
+// #OUTPUT_SHIFT 
+// #HELP_PDF_FILE ""
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+// #ENABLE_TRACE
+// #ENCODING_ASCII
+// #ENCODING_UTF16
+// #ENCODING_INHERIT_FROM_PARENT
+// #ENCODING_INHERIT_FROM_PROGRAM
+
+#HELP_BEGIN
+[Supported Display Models]
+E805
+E905
+
+[RS-232 Settings]
+Baud: 9600
+LengthL 8 bit
+Parity: none
+Stop Bit: 1
+Flow Control: none	
+#HELP_END
+
+#DEFINE_CONSTANT _NEC_RXBUFFERLEN			500
+
+#DEFINE_CONSTANT _NEC905_OPCODE_AUTOSETUP 	"001E"
+#DEFINE_CONSTANT _NEC905_OPCODE_AUTOADJ 	"10B7"
+#DEFINE_CONSTANT _NEC905_OPCODE_VOLUME 		"0062"
+#DEFINE_CONSTANT _NEC905_OPCODE_INPUT		"0060"
+#DEFINE_CONSTANT _NEC905_OPCODE_PWR_QRY		"01D6"
+#DEFINE_CONSTANT _NEC905_OPCODE_PWR_SET		"C203D6"
+#DEFINE_CONSTANT _NEC905_OPCODE_MUTE		"008D"
+#DEFINE_CONSTANT _NEC905_OPCODE_CHAN		"008B"
+
+#DEFINE_CONSTANT _NEC905_INPUT_VGA			1
+#DEFINE_CONSTANT _NEC905_INPUT_DVI			3
+#DEFINE_CONSTANT _NEC905_INPUT_HDMI			4
+#DEFINE_CONSTANT _NEC905_INPUT_Component	12
+#DEFINE_CONSTANT _NEC905_INPUT_Option		13
+#DEFINE_CONSTANT _NEC905_INPUT_DisplayPort	15
+#DEFINE_CONSTANT _NEC905_INPUT_HDMI2		18
+
+#DEFINE_CONSTANT _NEC905_MSGTYPE_CMD		"A"
+#DEFINE_CONSTANT _NEC905_MSGTYPE_CMD_REPLY	"B"
+#DEFINE_CONSTANT _NEC905_MSGTYPE_GET 		"C"
+#DEFINE_CONSTANT _NEC905_MSGTYPE_GET_REPLY	"D"
+#DEFINE_CONSTANT _NEC905_MSGTYPE_SET		"E"
+#DEFINE_CONSTANT _NEC905_MSGTYPE_SET_REPLY	"F"
+
+/*******************************************************************************************
+  DIGITAL, ANALOG and SERIAL INPUTS and OUTPUTS
+*******************************************************************************************/
+DIGITAL_INPUT 
+	power_on
+	,power_off
+	,power_toggle
+	,input_hdmi_1
+	,input_hdmi_2
+	,input_displayport
+	,input_vga
+	,input_dvi
+	,input_component
+	,input_option
+	,volume_up
+	,volume_down
+	,mute_on
+	,mute_off
+	,mute_toggle
+	,channel_up
+	,channel_down
+	,poll_enable
+	;
+
+ANALOG_INPUT 
+	_skip_
+	,set_volume_value
+	,set_volume_pct
+	;
+
+BUFFER_INPUT
+	_skip_ 
+	,from_device[_NEC_RXBUFFERLEN];
+
+DIGITAL_OUTPUT 
+	power_on_fb
+	,power_off_fb
+	,_skip_
+	,input_hdmi_1_fb
+	,input_hdmi_2_fb
+	,input_displayport_fb
+	,input_vga_fb
+	,input_dvi_fb
+	,input_component_fb
+	,input_option_fb
+	,_skip_
+	,_skip_
+	,mute_on_fb
+	,mute_off_fb
+	,_skip_
+	,_skip_
+	;
+	
+ANALOG_OUTPUT 
+	_skip_,_skip_,_skip_
+	,volume_value_fb
+	,volume_pct_fb
+	;
+STRING_OUTPUT 
+	_skip_
+	,to_device;
+
+/*******************************************************************************************
+  Parameters
+*******************************************************************************************/
+INTEGER_PARAMETER id;
+
+/*******************************************************************************************
+  Parameter Properties
+*******************************************************************************************/
+#BEGIN_PARAMETER_PROPERTIES id
+	propValidUnits = unitDecimal;
+	propDefaultUnit = unitDecimal;
+	propDefaultValue = 1d;
+#END_PARAMETER_PROPERTIES
+
+
+/*******************************************************************************************
+  Global Variables
+*******************************************************************************************/
+INTEGER
+	nPower
+	,nInput
+	,nVolume
+	,nMute
+	,nLastInput
+	,nSendOk
+	,nPoll
+	,nPausePolling
+	,nSendWaiting
+	;
+/*******************************************************************************************
+  Functions
+*******************************************************************************************/
+STRING_FUNCTION IDtoA()
+{
+	if (id = 0)
+		return ("*");
+	else
+		return (chr(64 + id));
+}
+
+INTEGER_FUNCTION AtoID(string cID)
+{
+	if (cID = "*")
+		return (0);
+	else
+		return (byte(cID,1) - 64);
+}
+
+FUNCTION SendString(string msgType, string msg)
+{
+	string header[7];
+	integer checkcode;
+	integer nMsgLenth;
+	string cMsgLength[2];
+	integer byt;
+	integer b;
+	
+	//if (nSendOk > 0)
+	//{
+		nMsgLenth = len(msg);
+		makestring(cMsgLength,"%02X",nMsgLenth);
+		makestring(header,"\x01\x30%s\x30%s%s",IDtoA(),msgType,cMsgLength);
+		trace("NEC Header=[%s]",header);
+		
+		//create check code
+		checkcode = 48; //0x30 second character of header
+		for(b=3 to 7)
+			checkcode = checkcode ^ byte(header,b);
+		for(b=1 to nMsgLenth)
+			checkcode = checkcode ^ byte(msg,b);
+			
+		trace("NEC BCC=%02X",checkcode);
+		trace("NEC TX=[%s%s%s\x0D]",header,msg,chr(checkcode));
+		makestring(to_device,"%s%s%s\x0D",header,msg,chr(checkcode));
+				
+	//	nSendOk = 0;
+		
+	//}
+	//else
+	//	trace("NEC TX Send Ok = False");			
+}
+
+FUNCTION QryPower()
+{
+	string msg[20];
+	makestring(msg,"\x02%s\x03",_NEC905_OPCODE_PWR_QRY);
+	SendString(_NEC905_MSGTYPE_CMD , msg);
+}
+
+FUNCTION SetPower(integer value)
+{
+	string msg[20];
+	if (value > 0)
+	{
+		makestring(msg,"\x02%s0001\x03",_NEC905_OPCODE_PWR_SET);
+	}
+	else
+	{
+		makestring(msg,"\x02%s0004\x03",_NEC905_OPCODE_PWR_SET);
+	}
+	SendString(_NEC905_MSGTYPE_CMD,msg);
+}
+
+FUNCTION ChangeChannel(integer value)
+{
+	string msg[20];
+	if (value = 1)
+	{
+		makestring(msg,"\x02%s0001\x03", _NEC905_OPCODE_CHAN);
+	}
+	else if (value = 2)
+	{
+		makestring(msg,"\x02%s0002\x03", _NEC905_OPCODE_CHAN);
+	}
+	else
+	{
+		makestring(msg,"\x02%s0000\x03", _NEC905_OPCODE_CHAN);
+	}
+	SendString(_NEC905_MSGTYPE_CMD,msg);
+}
+
+FUNCTION QryInput()
+{
+	string msg[20];
+	makestring(msg,"\x02%s\x03",_NEC905_OPCODE_INPUT);
+	SendString(_NEC905_MSGTYPE_GET , msg);
+
+}
+
+FUNCTION SetInput(integer nInput)
+{
+	string msg[20];
+	string value[4];
+
+	switch(nInput)
+	{	
+		case (_NEC905_INPUT_VGA			): value = "0001";
+		case (_NEC905_INPUT_DVI			): value = "0003";
+		case (_NEC905_INPUT_HDMI		): value = "0011";
+		case (_NEC905_INPUT_Component	): value = "001C";
+		case (_NEC905_INPUT_DisplayPort	): value = "000F";
+		case (_NEC905_INPUT_HDMI2		): value = "0012";
+		case (_NEC905_INPUT_Option		): value = "000D";
+	}
+	
+	makestring(msg,"\x02%s%s\x03",_NEC905_OPCODE_INPUT,value);	
+	SendString(_NEC905_MSGTYPE_SET,msg);		
+}
+
+FUNCTION QryVolume()
+{
+	string msg[20];
+	makestring(msg,"\x02%s\x03",_NEC905_OPCODE_VOLUME);
+	SendString(_NEC905_MSGTYPE_GET , msg);
+}
+
+
+FUNCTION SetVolume(integer value)
+{
+	string msg[20];
+	
+	if (value > 0 && value <= 100)
+	{
+		makestring(msg,"\x02%s%04X\x03",_NEC905_OPCODE_VOLUME,value);
+		SendString(_NEC905_MSGTYPE_SET,msg);		
+	}
+	else
+		trace("NEC Invalid Volume Value(0-100). Value=%u",value);
+}
+
+FUNCTION QryMute()
+{
+	string msg[20];
+    makestring(msg,"\x02%s\x03",_NEC905_OPCODE_MUTE);
+	SendString(_NEC905_MSGTYPE_GET,msg);
+}
+
+FUNCTION SetMute(integer value)
+{
+	string msg[20];
+    makestring(msg,"\x02%s%04X\x03",_NEC905_OPCODE_MUTE,value);
+	SendString(_NEC905_MSGTYPE_SET,msg);
+
+}
+
+FUNCTION UpdateFb()
+{
+	if (nPower > 0)
+	{
+		power_off_fb = 0;
+		power_on_fb = 1;
+	}
+	else
+	{
+		power_on_fb = 0;
+		power_off_fb = 1;
+	}
+	
+	if (nMute > 0)
+	{
+		mute_off_fb = 0;
+		mute_on_fb = 1;
+	}
+	else
+	{
+		mute_on_fb = 0;
+		mute_off_fb = 1;
+	}
+	
+	switch(nInput)
+	{
+		case (_NEC905_INPUT_VGA			): 
+		{
+			input_hdmi_1_fb			= 0;
+			input_hdmi_2_fb			= 0;
+			input_displayport_fb	= 0;			
+			input_dvi_fb			= 0;
+			input_component_fb		= 0;
+			input_option_fb			= 0;
+			input_vga_fb			= 1;
+		}   
+		case (_NEC905_INPUT_DVI			): 
+		{
+			input_hdmi_1_fb			= 0;
+			input_hdmi_2_fb			= 0;
+			input_displayport_fb	= 0;			
+			input_vga_fb			= 0;
+			input_component_fb		= 0;
+			input_option_fb			= 0;
+			input_dvi_fb			= 1;						
+		}   
+		case (_NEC905_INPUT_HDMI		): 
+		{			
+			input_hdmi_2_fb			= 0;
+			input_displayport_fb	= 0;			
+			input_vga_fb			= 0;
+			input_component_fb		= 0;
+			input_dvi_fb			= 0;
+			input_option_fb			= 0;
+			input_hdmi_1_fb			= 1;
+		}
+		case (_NEC905_INPUT_Component	): 
+		{
+			input_hdmi_1_fb			= 0;
+			input_hdmi_2_fb			= 0;
+			input_displayport_fb	= 0;			
+			input_vga_fb			= 0;			
+			input_dvi_fb			= 0;
+			input_option_fb			= 0;
+			input_component_fb		= 1;
+		}
+		case (_NEC905_INPUT_DisplayPort	): 
+		{
+			input_hdmi_1_fb			= 0;
+			input_hdmi_2_fb			= 0;			
+			input_vga_fb			= 0;
+			input_component_fb		= 0;
+			input_dvi_fb			= 0;
+			input_option_fb			= 0;						
+			input_displayport_fb	= 1;			
+		}
+		case (_NEC905_INPUT_HDMI2		): 
+		{
+			input_hdmi_1_fb			= 0;			
+			input_displayport_fb	= 0;			
+			input_vga_fb			= 0;
+			input_component_fb		= 0;
+			input_dvi_fb			= 0;
+			input_option_fb			= 0;						
+			input_hdmi_2_fb			= 1;
+		}
+		case (_NEC905_INPUT_Option		):
+		{
+			input_hdmi_1_fb			= 0;			
+			input_displayport_fb	= 0;			
+			input_vga_fb			= 0;
+			input_component_fb		= 0;
+			input_dvi_fb			= 0;
+			input_hdmi_2_fb			= 0;
+			input_option_fb			= 1;						
+		}		
+	}
+	
+	volume_value_fb = nVolume;
+	volume_pct_fb = (nVolume * 65535 / 100);	
+}
+
+FUNCTION ParseRx(string temp)
+{
+	integer 
+		x
+		,n
+		,nID
+		,nValue
+		;
+	string
+		trash[40]
+		,opcode[6]
+		,cID[1]
+		,msgType[1]
+		,msgLen[2]
+		,msgResultCode[2]
+		,msgOpcode[6]
+		,msgOpcodeType[2]
+		,msgValueRange[4]
+		,msgValue[4]
+		,bcc[1]
+		,msg[40]
+		;
+	
+
+		
+    if (find("\x0100",temp)) //header: intended for controller
+    {
+        trash = remove("\x0100",temp);
+        cID = chr(getc(temp));
+        nID = AtoID(cID);			
+        trace("NEC Rx ID=%u",nID);
+        
+        msgType = chr(getc(temp));
+        trace("NEC Rx MsgType=%s",msgType);
+        
+        makestring(msgLen,"%s%s",chr(getc(temp)),chr(getc(temp)));
+        
+        msg = remove("\x03",temp);
+        trash = remove("\x02",msg);
+        msg = left(msg,len(msg) - 1);
+        trace("NEC Rx Msg=%s",msg);
+        
+        bcc = chr(getc(temp));
+        trace("NEC Rx bcc=%s",bcc);
+        
+        if (nID = 0 || nID =id)
+        {
+            switch(1)
+            {
+                case(msgType = _NEC905_MSGTYPE_CMD_REPLY):
+                {
+                    
+                    switch(1)
+                    {
+                        //Power Command Status Read Reply
+                        case(find(msg,"0200D60000040001")>0):
+                        {
+                            nPower = 1;
+                            UpdateFb();
+                        }
+                        case(  find(msg,"0200D60000040002") > 0		//standby
+                            || find(msg,"0200D60000040003") > 0		//suspended
+                            || find(msg,"0200D60000040004") > 0	):  //off
+                        {
+                            nPower = 0;
+                            UpdateFb();
+                        }
+                        //Power command Set Reply
+                        case(find(msg,"00C203D60001") > 0):
+                        {
+                            nPower = 1;
+                            UpdateFb();
+                        }
+                        case(find(msg,"00C203D60004") > 0):
+                        {
+                            nPower = 0;
+                            UpdateFb();
+                        }
+                    }
+                }
+                case(msgType = _NEC905_MSGTYPE_SET_REPLY || msgType = _NEC905_MSGTYPE_GET_REPLY):
+                {
+                    makestring(msgResultCode,"%s%s",chr(getc(msg)),chr(getc(msg)));
+                    msgOpcode = left(msg,4);
+                    msgOpcodeType = mid(msg,5,2);
+                    msgValueRange = mid(msg,7,4);
+                    msgValue = right(msg,4);
+                    
+                    trace("NEC Rx Opcode=%s",msgOpcode);
+                    trace("NEC Rx OpcodeType=%s",msgOpcodeType);
+                    trace("NEC Rx ValurRange=%s",msgValueRange);
+                    trace("NEC Rx Value=%s",msgValue);
+                    
+                    switch(1)
+                    {
+                        case(msgOpcode = _NEC905_OPCODE_INPUT): //input
+                        {
+                            nInput = hextoi(msgValue);
+                            UpdateFb();
+                        }
+                        case(msgOpcode = _NEC905_OPCODE_VOLUME): //volume
+                        {
+                            nVolume = hextoi(msgValue);
+                            UpdateFb();
+                        }
+                        case(msgOpcode = _NEC905_OPCODE_MUTE): //mute
+                        {
+                            nValue = hextoi(msgValue);
+                            if (nValue <> 1)
+                                nMute = 0;
+                            else
+                                nMute = 1;
+                            
+                            UpdateFb();
+                        }
+                    }
+                }
+            }
+        }
+        else
+            trace("NEC Rx ID=%d does not match module=%d.",nID,id);
+	}
+    nSendOk = 1;
+}
+
+
+
+/*******************************************************************************************
+  Event Handlers
+*******************************************************************************************/
+PUSH power_on
+{
+	SetPower(1);
+	nPower = 1;
+	UpdateFb();
+    nPausePolling = 16;
+}
+
+PUSH power_off
+{
+	SetPower(0);
+	nPower = 0;
+	UpdateFb();
+	nPausePolling = 5;
+}
+
+PUSH power_toggle
+{
+	if (nPower > 0)
+	{
+		SetPower(0);
+		nPower = 0;
+		nPausePolling = 16;
+
+	}
+	else
+	{
+		SetPower(1);
+		nPower = 1;
+		nPausePolling = 5;
+	}
+	UpdateFb();
+}
+
+PUSH input_hdmi_1
+{
+	SetInput(_NEC905_INPUT_HDMI);
+	nInput = _NEC905_INPUT_HDMI;
+	nLastInput = _NEC905_INPUT_HDMI;
+	UpdateFb();
+	nPausePolling = 11;
+}
+
+PUSH input_hdmi_2
+{
+	SetInput(_NEC905_INPUT_HDMI2);
+	nInput = _NEC905_INPUT_HDMI2;
+	nLastInput = _NEC905_INPUT_HDMI2;
+	UpdateFb();
+	nPausePolling = 11;
+}
+
+PUSH input_displayport
+{	
+	SetInput(_NEC905_INPUT_DisplayPort);
+	nInput = _NEC905_INPUT_DisplayPort;
+	nLastInput = _NEC905_INPUT_DisplayPort;
+	UpdateFb();
+	nPausePolling = 11;
+}   
+
+PUSH input_vga
+{
+	SetInput(_NEC905_INPUT_VGA);
+	nInput = _NEC905_INPUT_VGA;
+	nLastInput = _NEC905_INPUT_VGA;
+	UpdateFb();
+	nPausePolling = 11;
+}
+
+PUSH input_dvi
+{
+	SetInput(_NEC905_INPUT_DVI);
+	nInput = _NEC905_INPUT_DVI;
+	nLastInput = _NEC905_INPUT_DVI;
+	UpdateFb();
+	nPausePolling = 11;
+}	
+
+PUSH input_component
+{
+	SetInput(_NEC905_INPUT_Component);
+	nInput = _NEC905_INPUT_Component;
+	nLastInput = _NEC905_INPUT_Component;
+    UpdateFb();
+    nPausePolling = 11;
+}
+
+PUSH input_option
+{
+	SetInput(_NEC905_INPUT_Option);
+	nInput = _NEC905_INPUT_Option;
+	nLastInput = _NEC905_INPUT_Option;
+    UpdateFb();
+    nPausePolling = 11;
+}
+
+PUSH volume_up
+{
+	while(volume_up)
+	{
+		if (nVolume >= 100)
+			break;
+		else
+		{
+			nVolume = nVolume + 1;
+			if (nVolume > 100)
+				nVolume = 100;
+				
+			SetVolume(nVolume);
+			delay(25);
+		}
+		UpdateFb();
+		nPausePolling = 2;		
+	}
+}
+
+PUSH volume_down
+{
+	while(volume_down)
+	{
+		if (nVolume = 0)
+			break;
+		else
+		{
+			if (nVolume > 0)
+				nVolume = nVolume - 1;
+			else
+				nVolume = 0;
+	
+			SetVolume(nVolume);
+			delay(25);
+		}
+		UpdateFb();
+		nPausePolling = 2;		
+	}
+
+}
+
+RELEASE volume_up
+RELEASE volume_down
+{
+	QryVolume();
+}
+
+PUSH mute_on
+{
+	SetMute(1);
+	nMute = 1;
+	UpdateFb();
+	nPausePolling = 2;
+}
+
+PUSH mute_off
+{
+	SetMute(0);
+	nMute = 0;
+	UpdateFb();
+	nPausePolling = 2;
+}
+PUSH mute_toggle
+{
+	if (nMute > 0)
+		SetMute(0);
+	else
+		SetMute(1);
+	UpdateFb();
+	nPausePolling = 2;
+}
+
+RELEASE mute_on
+RELEASE mute_off
+RELEASE mute_toggle
+{
+	QryMute();
+}
+
+PUSH channel_up
+{
+	ChangeChannel(1);
+}
+release channel_up
+{
+	ChangeChannel(0);
+}
+
+push channel_down
+{
+	ChangeChannel(2);
+}
+release channel_down
+{
+	ChangeChannel(0);
+}
+
+THREADSAFE PUSH poll_enable
+{
+	while(poll_enable)
+	{
+		if (nPausePolling > 0)
+		{
+			nPausePolling = nPausePolling - 1;
+		}
+		else if (nPausePolling > 60) //out of bounds
+		{
+			nPausePolling = 3;
+		}
+		else
+		{
+			nPoll = nPoll + 1;
+			if (nPoll > 5)
+				nPoll = 1;
+			switch(nPoll)
+			{
+				case(1): QryPower();
+				case(2): if (nPower > 0) QryVolume();
+				case(3): if (nPower > 0) QryMute();
+				case(4): if (nPower > 0) QryInput();
+			}
+		}
+		delay(100);
+	}	
+}
+
+CHANGE set_volume_value
+{
+	if (set_volume_value <= 100)
+	{
+		nVolume = set_volume_value;
+		SetVolume(nVolume);
+		nPausePolling = 2;
+	}		
+}
+
+CHANGE set_volume_pct
+{
+	nVolume = set_volume_pct * 100 / 65535;
+	SetVolume(nVolume);
+	nPausePolling = 2;
+}
+
+THREADSAFE CHANGE from_device
+{
+	string sTemp[100];
+	while(1)
+	{
+		try
+		{	
+			sTemp = gather("\x0D",from_device);
+			ParseRx(sTemp);
+		}
+		catch
+		{
+			Print("[NEC E905 v005] Error Processing from_device");
+		}
+	}
+}
+/*******************************************************************************************
+  Main()
+*******************************************************************************************/
+Function Main()
+{
+	nPower = 0;
+	nInput = 0;
+	nVolume = 0;
+	nMute = 0;
+	nLastInput = 0;
+	nSendOk = 1;
+	nPoll = 0;
+	nSendWaiting = 0;
+    WaitForInitializationComplete();   
+}
+
+

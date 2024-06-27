@@ -1,0 +1,1 @@
+C:\libs\Crestron\simplsharp\MagicBus\MagicBus\obj\Debug\ResolveAssemblyReference.cache

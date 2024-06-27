@@ -1,0 +1,554 @@
+/*******************************************************************************************
+  SIMPL+ Module Information
+  (Fill in comments below)
+*******************************************************************************************/
+/*
+Dealer Name: Solutionz
+System Name:
+System Number:
+Programmer: Daniel Portugal
+Comments:
+
+based from "Aver-Camera_IP_v2.umc"
+take on similar IO as "Panasonic Camera AW-HE40S v6_2.usp"
+*/
+#HELP_BEGIN
+Uses internal udp client on port 52381
+
+Command Protocol
+https://www.averusa.com/pro-av/downloads/control-codes/TR530_TR530+_TR320_Control_Codes.pdf
+#HELP_END
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#DEFINE_CONSTANT MAX_PRESETS 8
+#DEFINE_CONSTANT CMD_TYPE_SET 1
+#DEFINE_CONSTANT CMD_TYPE_GET 2
+#DEFINE_CONSTANT CMD_TYPE_REPLY 3
+#DEFINE_CONSTANT SEQ_NUM_POWER 1
+#DEFINE_CONSTANT SEQ_NUM_PANTILT 2
+#DEFINE_CONSTANT SEQ_NUM_TRACKING 3
+#DEFINE_CONSTANT SEQ_NUM_ZOOM 4
+#DEFINE_CONSTANT SEQ_NUM_RECALL 5
+#DEFINE_CONSTANT SEQ_NUM_SAVE 6
+
+DIGITAL_INPUT
+    _SKIP_  //skip params
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,power_on
+    ,power_off
+    ,power_toggle
+    ,tilt_up
+    ,tilt_down
+    ,pan_left
+    ,pan_right
+    ,zoom_in
+    ,zoom_out
+    ,enable_polling
+    ,force_disconnect
+    ,_SKIP_
+    ,tracking_on
+    ,tracking_off
+    ,_SKIP_
+    ,debug_on
+    ,_SKIP_
+    ,_SKIP_ //,comm_error
+    ,_SKIP_ //,comm_ok
+    ,recall_preset[MAX_PRESETS]
+    ,save_preset[MAX_PRESETS]
+    ;
+
+ANALOG_INPUT
+    panspeed_pct,
+    tiltspeed_pct,
+    zoomspeed_pct
+    ;
+
+STRING_INPUT
+    IPAddress$[64],
+    PanSpeed$[5],
+    TiltSpeed$[5],
+    ZoomSpeed$[5];
+
+DIGITAL_OUTPUT
+    _SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,power_on_fb
+    ,power_off_fb
+    ,_SKIP_ //,power_toggle
+    ,_SKIP_ //,tilt_up
+    ,_SKIP_ //,tilt_down
+    ,_SKIP_ //,pan_left
+    ,_SKIP_ //,pan_right
+    ,_SKIP_ //,zoom_in
+    ,_SKIP_ //,zoom_out
+    ,_SKIP_ //,enable_polling
+    ,_SKIP_ //,force_disconnec
+    ,_SKIP_
+    ,tracking_on_fb
+    ,tracking_off_fb
+    ,_SKIP_
+    ,_SKIP_    //,debug_on
+    ,_SKIP_
+    ,comm_error
+    ,comm_ok
+    ,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_//presets
+    ,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_,_SKIP_
+    ;
+
+ANALOG_OUTPUT
+    panspeed_pct_fb
+    ,tiltspeed_pct_fb
+    ,zoomspeed_pct_fb
+    ,_skip_
+    ;
+
+INTEGER_PARAMETER Id;
+STRING_PARAMETER Ip_Address[64];
+
+INTEGER_PARAMETER pan_speed,tilt_speed,zoom_speed;
+#BEGIN_PARAMETER_PROPERTIES pan_speed
+    propValidUnits = unitDecimal;
+    propDefaultUnit = unitDecimal;
+    propBounds = 0d , 16d;
+    propDefaultvalue = 6d;
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES tilt_speed
+    propValidUnits = unitDecimal;
+    propDefaultUnit = unitDecimal;
+    propBounds = 0d , 16d;
+    propDefaultvalue = 6d;
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES zoom_speed
+    propValidUnits = unitDecimal;
+    propDefaultUnit = unitDecimal;
+    propBounds = 0d , 7d;
+    propDefaultvalue = 2d;
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES Ip_Address
+    propDefaultUnit = unitString;
+    propValidUnits = unitString;
+    propDefaultValue = "192.168.1.151";
+#END_PARAMETER_PROPERTIES
+
+#INCLUDEPATH "C:\libs\Crestron\simplsharp\Tracer\Tracer\bin\Debug"
+#USER_SIMPLSHARP_LIBRARY "Tracing"
+
+
+INTEGER powerstate;
+INTEGER trackingstate;
+INTEGER panspeed, tiltspeed,zoomspeed;
+INTEGER inCommWait;
+SIGNED_INTEGER udpState;
+string IpAddress[64];
+UDP_SOCKET udpClient[1000];
+
+Tracer Debugger;
+
+//region Functions
+/******************************************************************************/
+function UpdateFb()
+{
+    if (powerstate > 0)
+    {
+        power_off_fb = 0;
+        power_on_fb = 1;
+    }
+    else
+    {
+        power_on_fb = 0;
+        power_off_fb = 1;
+    }
+
+    panspeed_pct_fb = panspeed * 65535 / 16;
+    tiltspeed_pct_fb = tiltspeed * 65535 / 16;
+    zoomspeed_pct_fb = zoomspeed * 65535 / 7;
+
+    if (trackingstate > 0)
+    {
+        tracking_off_fb = 0;
+        tracking_on_fb = 1;
+    }
+    else
+    {
+        tracking_on_fb = 0;
+        tracking_off_fb = 1;
+    }
+}
+/******************************************************************************/
+function Connect()
+{
+    SIGNED_INTEGER x;
+    x = SocketUdp_Enable(udpClient, IpAddress, 52381);
+    if (x >= 0)
+    {
+        udpState = 1;
+    }
+    else
+    {
+        Debugger.Error1("Error opening UDP to {}", IpAddress);
+        GenerateUserError("[AVER UDP] Error opening udp to %s", IpAddress);
+        udpState = x;
+    }
+}
+/******************************************************************************/
+function Disconnect()
+{
+    SIGNED_INTEGER x;
+    x = SocketUdp_Disable(udpClient);
+    if (x >= 0)
+        udpState = 0;
+    else
+    {
+        Debugger.Error1("Error closing UDP to ", IpAddress);
+        udpState = x;
+    }
+
+}
+/******************************************************************************/
+function CommWait()
+{
+    inCommWait = 1;
+    Wait(3000, wCommWait)
+    {
+        inCommWait = 0;
+        comm_ok = 0;
+        comm_error = 1;
+    }
+}
+/******************************************************************************/
+function StartCommTimer()
+{
+    if (inCommWait > 0)
+        ReTimeWait(3000, wCommWait);
+    else
+        CommWait();
+}
+/******************************************************************************/
+//param CmdType = one of CMD_TYPE_SET, CMD_TYPE_GET, CMD_TYPE_REPLY
+//parm SeqNum = one of the constants SEQ_NUM_*
+//param visca = the visca command to be sent except for the first byte which is the Id.
+/*
+    sequence is an identifier used in the protocol to distinguish each
+    command sent to the camera. The camera responds back with the sequence
+    number. Here we will use it to distinguish each type of command sent.
+*/
+function Send(integer CmdType,  integer SeqNum, string visca)
+{
+    string payloadtype[2];
+    string payloadlength[2];
+    string sId[1];
+    string sequence[4];
+    integer x;
+    integer hi, lo;
+    string msg[32];
+
+    if (udpState >= 0)
+    {
+        switch(CmdType)
+        {
+            case (CmdType = CMD_TYPE_SET):
+            {
+                payloadtype = "\x01\x00";
+            }
+            case (CmdType = CMD_TYPE_GET):
+            {
+                payloadtype = "\x01\x10";
+            }
+            case (CmdType = CMD_TYPE_REPLY):
+            {
+                payloadtype = "\x01\x11";
+            }
+        }
+
+        x = len(visca) + 1;
+        payloadlength = "\x00"+ chr(x);
+
+        sequence = itoa(SeqNum);
+
+        sId = chr(128 + Id);
+        msg = payloadtype + payloadlength + sequence + sId + visca;
+
+        SocketSend(udpClient,msg);
+    }
+    else
+    {
+        Debugger.Error("Cannot send, udp disabled");
+    }
+}
+/******************************************************************************/
+function ProcessRx(string rx)
+{
+    string payloadtype[2];
+    string payloadlength[2];
+    string seq[4];
+    string payload[16];
+    integer nSeq;
+    integer id;
+
+    if (inCommWait > 0)
+        CancelWait(wCommWait);
+
+    comm_error = 0;
+    comm_ok = 1;
+
+    Debugger.Debug1("Rx:{}",rx);
+
+    payloadtype = left(rx, 2);
+    payloadlength = mid(rx, 3, 2);
+    seq = mid(rx, 5, 4);
+    payload = mid(rx, 9, len(rx));
+    nSeq = byte(seq,4);
+    id = byte(payload,1) >> 4;
+    Debugger.Debug1("rx type:{}", payloadtype);
+    Debugger.Debug1("rx len :{}", payloadlength);
+    Debugger.Debug1("rx seq :{}", itoa(nSeq));
+    Debugger.Debug1("rx load:{}", payload);
+    Debugger.Debug1("rx id  :{}", itoa(id));
+    switch(nSeq)
+    {
+        case (SEQ_NUM_POWER):
+        {
+
+            if (find("\x50\x02\xFF", payload) > 0)
+            {
+                powerstate = 1;
+                UpdateFb();
+            }
+            if (find("\x50\x03\xFF", payload) > 0)
+            {
+                powerstate = 0;
+                UpdateFb();
+            }
+
+        }
+        case (SEQ_NUM_TRACKING):
+        {
+            if (find("\x50\x02\xFF", payload) > 0)
+            {
+                trackingstate = 1;
+                UpdateFb();
+            }
+            if (find("\x50\x03\xFF", payload) > 0)
+            {
+                trackingstate = 0;
+                UpdateFb();
+            }
+        }
+        default:
+        {
+            Debugger.Debug("Unprocessed data");
+        }
+    }
+}
+//endregion
+//region Events
+/******************************************************************************/
+PUSH power_on
+{
+    Send(CMD_TYPE_SET, SEQ_NUM_POWER, "\x01\x04\x00\x02\xFF");
+}
+PUSH power_off
+{
+    Send(CMD_TYPE_SET, SEQ_NUM_POWER, "\x01\x04\x00\x03\xFF");
+}
+PUSH power_toggle
+{
+    if (powerstate > 0)
+    {
+        powerstate = 0;
+        Send(CMD_TYPE_SET, SEQ_NUM_POWER, "\x01\x04\x00\x03\xFF");
+        UpdateFb();
+    }
+    else
+    {
+        powerstate = 1;
+        Send(CMD_TYPE_SET, SEQ_NUM_POWER, "\x01\x04\x00\x02\xFF");
+        UpdateFb();
+    }
+}
+PUSH tilt_up
+{
+    string cmd[8];
+    cmd = "\x01\x06\x01" + chr(panspeed) + chr(tiltspeed) + "\x03\x01\xFF";
+    Send(CMD_TYPE_SET, SEQ_NUM_PANTILT, cmd);
+}
+PUSH tilt_down
+{
+    string cmd[8];
+    cmd = "\x01\x06\x01" + chr(panspeed) + chr(tiltspeed) + "\x03\x02\xFF";
+    Send(CMD_TYPE_SET, SEQ_NUM_PANTILT, cmd);
+}
+PUSH pan_left
+{
+    string cmd[8];
+    cmd = "\x01\x06\x01" + chr(panspeed) + chr(tiltspeed) + "\x01\x03\xFF";
+    Send(CMD_TYPE_SET, SEQ_NUM_PANTILT, cmd);
+}
+PUSH pan_right
+{
+    string cmd[8];
+    cmd = "\x01\x06\x01" + chr(panspeed) + chr(tiltspeed) + "\x02\x03\xFF";
+    Send(CMD_TYPE_SET, SEQ_NUM_PANTILT, cmd);
+}
+RELEASE tilt_up
+RELEASE tilt_down
+RELEASE pan_left
+RELEASE pan_right
+{
+    string cmd[8];
+    cmd = "\x01\x06\x01" + chr(panspeed) + chr(tiltspeed) + "\x03\x03\xFF";
+    Send(CMD_TYPE_SET, SEQ_NUM_PANTILT, cmd);
+}
+PUSH zoom_in
+{
+    string cmd[5];
+    cmd = "\x01\x04\x07"+ chr(32+zoomspeed)+"\xFF";
+    Send(CMD_TYPE_SET, SEQ_NUM_ZOOM, cmd);
+}
+PUSH zoom_out
+{
+    string cmd[5];
+    cmd = "\x01\x04\x07"+ chr(48+zoomspeed)+"\xFF";
+    Send(CMD_TYPE_SET, SEQ_NUM_ZOOM, cmd);
+}
+RELEASE zoom_in
+RELEASE zoom_out
+{
+    string cmd[5];
+    cmd = "\x01\x04\x07\x00\xFF";
+    Send(CMD_TYPE_SET, SEQ_NUM_ZOOM, cmd);
+}
+PUSH enable_polling
+{
+    integer x;
+    while(enable_polling)
+    {
+        delay(100);
+        x = x + 1;
+        switch(x)
+        {
+            case (1):
+            {
+                //power query
+                Send(CMD_TYPE_GET, SEQ_NUM_POWER, "\x09\x04\x00\xFF");
+            }
+            case (2):
+            {
+                //query tracking
+                Send(CMD_TYPE_GET, SEQ_NUM_POWER, "\x09\x36\x69\x02\xFF");
+            }
+            default:
+            {
+                if (x > 10)
+                    x = 1;
+            }
+        }
+
+
+    }
+}
+PUSH tracking_on
+{
+    Send(CMD_TYPE_SET, SEQ_NUM_TRACKING, "\x01\x04\x7D\x02\x00\xFF");
+}
+PUSH tracking_off
+{
+    Send(CMD_TYPE_SET, SEQ_NUM_TRACKING, "\x01\x04\x7D\x03\x00\xFF");
+}
+
+PUSH force_disconnect
+{
+    Disconnect();
+}
+
+PUSH recall_preset
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+
+}
+PUSH save_preset
+{
+    integer x;
+    x = GetLastModifiedArrayIndex();
+}
+
+PUSH debug_on
+{
+    Debugger.Level = LogLevel.Debug;
+}
+RELEASE debug_on
+{
+    Debugger.Level = LogLevel.Error;
+}
+
+CHANGE panspeed_pct
+{
+    panspeed = panspeed_pct * 16 / 65535;
+    UpdateFb();
+}
+CHANGE tiltspeed_pct
+{
+    tiltspeed = tiltspeed_pct * 16 / 65535;
+    UpdateFb();
+}
+CHANGE zoomspeed_pct
+{
+    zoomspeed = zoomspeed_pct * 7 / 65535;
+    UpdateFb();
+}
+SOCKETRECEIVE udpClient
+{
+    ProcessRx(udpClient.SocketRxBuf);
+    ClearBuffer(udpClient.SocketRxBuf);
+}
+//endregion
+
+CHANGE IPAddress$
+{
+    Disconnect();
+    if (len(IPAddress$) > 0)
+    {
+        IPAddress = IPAddress$;
+        Connect();
+    }
+}
+CHANGE PanSpeed$
+{
+    panspeed = atoi(PanSpeed$);
+}
+CHANGE TiltSpeed$
+{
+    tiltspeed = atoi(TiltSpeed$);
+}
+CHANGE ZoomSpeed$
+{
+    zoomspeed = atoi(ZoomSpeed$);
+}
+
+
+
+/******************************************************************************/
+Function Main()
+{
+    Debugger.Name = "Aver UDP";
+    panspeed = pan_speed;
+    tiltspeed = tilt_speed;
+    zoomspeed = zoom_speed;
+    IpAddress = Ip_Address;
+    WaitForInitializationComplete();
+    UpdateFb();
+	if (len(IpAddress) > 0)
+		Connect();
+}

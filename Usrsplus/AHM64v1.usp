@@ -1,0 +1,170 @@
+#HELP_BEGIN
+For controlling an AHM 64.
+According to AHM TCP Protocol v1.1
+https://www.allen-heath.com/media/AHM-TCP-Protocol-V1.1.pdf
+
+Use TCP Client Port #51325
+
+by Daniel Portugal
+#HELP_END
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#DEFINE_CONSTANT MAX_FADERS 32
+#INCLUDEPATH "C:\\libs\\Crestron\\simplsharp\\AllenHeath_AHM64\\AllenHeath_AHM64\\bin\\Debug\\"
+#USER_SIMPLSHARP_LIBRARY "AllenHeath_AHM64"
+
+// region INPUTS & OUTPUTS
+digital_input
+    tcp_connected
+    ;
+
+STRING_INPUT
+    rx[500];
+
+string_output
+    tx;
+// endregion
+// region ARRAY I/O
+digital_input
+     input_inc[MAX_FADERS]
+    ,input_dec[MAX_FADERS]
+    ,input_mute_on[MAX_FADERS]
+    ,input_mute_off[MAX_FADERS]
+    ,input_mute_toggle[MAX_FADERS]
+    ,_skip_
+    ,zone_inc[MAX_FADERS]
+    ,zone_dec[MAX_FADERS]
+    ,zone_mute_on[MAX_FADERS]
+    ,zone_mute_off[MAX_FADERS]
+    ,zone_mute_toggle[MAX_FADERS]
+    ,_skip_
+    ,group_inc[MAX_FADERS]
+    ,group_dec[MAX_FADERS]
+    ,group_mute_on[MAX_FADERS]
+    ,group_mute_off[MAX_FADERS]
+    ,group_mute_toggle[MAX_FADERS]
+    ;
+
+analog_input
+    input_set_level[MAX_FADERS]
+    ,_skip_
+    ,zone_set_level[MAX_FADERS]
+    ,_skip_
+    ,group_set_level[MAX_FADERS]
+    ;
+
+digital_output
+    input_mute_on_fb[MAX_FADERS]
+    ,_skip_
+    ,zone_mute_on_fb[MAX_FADERS]
+    ,_skip_
+    ,group_mute_on_fb[MAX_FADERS]
+    ;
+
+analog_output
+    input_level_fb[MAX_FADERS]
+    ,_skip_
+    ,zone_level_fb[MAX_FADERS]
+    ,_skip_
+    ,group_level_fb[MAX_FADERS]
+    ;
+
+// endregion
+
+
+// region Globals //////////////////////////////////////////////////////////////
+integer x;
+Device Mixer;
+// endregion Globals
+
+// region Functions ////////////////////////////////////////////////////////////
+eventhandler eInputPct(Device sender,UShortArrayEventArgs args)
+{
+    integer x, v;
+    x = args.Index + 1;
+    v = args.Data;
+    if (x <= MAX_FADERS)
+        input_level_fb[x] = v;
+}
+eventhandler eZonePct(Device sender,UShortArrayEventArgs args)
+{
+    integer x, v;
+    x = args.Index + 1;
+    v = args.Data;
+    if (x <= MAX_FADERS)
+        zone_level_fb[x] = v;
+}
+eventhandler eGroupPct(Device sender,UShortArrayEventArgs args)
+{
+    integer x, v;
+    x = args.Index + 1;
+    v = args.Data;
+    if (x <= MAX_FADERS)
+        group_level_fb[x] = v;
+}
+
+eventhandler eInputMute(Device sender,UShortArrayEventArgs args)
+{
+    integer x, v;
+    x = args.Index + 1;
+    v = args.Data;
+    if (x <= MAX_FADERS)
+        input_mute_on_fb[x] = v;
+}
+eventhandler eZoneMute(Device sender,UShortArrayEventArgs args)
+{
+    integer x, v;
+    x = args.Index + 1;
+    v = args.Data;
+    if (x <= MAX_FADERS)
+        zone_mute_on_fb[x] = v;
+}
+eventhandler eGroupMute(Device sender,UShortArrayEventArgs args)
+{
+    integer x, v;
+    x = args.Index + 1;
+    v = args.Data;
+    if (x <= MAX_FADERS)
+        group_mute_on_fb[x] = v;
+}
+
+eventhandler eTransmit(Device sender, StringEventArgs args)
+{
+    tx = args.Data;
+}
+
+function Register()
+{
+    RegisterEvent(Mixer, InputPctChanged, eInputPct);
+    RegisterEvent(Mixer, ZonePctChanged, eZonePct);
+    RegisterEvent(Mixer, GroupPctChanged, eGroupPct);
+
+    RegisterEvent(Mixer, InputMuteChanged, eInputMute);
+    RegisterEvent(Mixer, ZoneMuteChanged, eZoneMute);
+    RegisterEvent(Mixer, GroupMuteChanged, eGroupMute);
+
+    RegisterEvent(mixer, Send, eTransmit);
+}
+// endregion Functions
+
+// region Events////////////////////////////////////////////////////////////////
+RELEASE tcp_connected
+{
+    clearbuffer(rx);
+}
+CHANGE rx
+{
+    string data[500];
+    rx = data;
+    Mixer.Parse(data);
+}
+// endregion Events
+
+////////////////////////////////////////////////////////////////////////////////
+FUNCTION MAIN()
+{
+    Register();
+    WaitForInitializationComplete();
+}

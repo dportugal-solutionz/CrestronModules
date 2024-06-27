@@ -1,0 +1,122 @@
+/*
+	SPINITAR
+	by DPORTUGAL
+*/
+
+
+#DEFAULT_VOLATILE
+#ANALOG_SERIAL_EXPAND	InputsWithOutputs
+#DIGITAL_EXPAND			InputsWithOutputs
+
+
+#HELP_BEGIN
+
+countdown timer that uses current Time of Day to trigger its ouptut.
+
+start					stores current time and starts the countdown.
+stop					stops the countdown.
+seedvalue_in_seconds	number of seconds to countdown from.
+
+#HELP_END
+
+
+
+/*******************************************************************************************
+  DIGITAL, ANALOG and SERIAL INPUTS and OUTPUTS
+*******************************************************************************************/
+DIGITAL_INPUT start, stop;
+ANALOG_INPUT seedvalue_in_seconds;
+// STRING_INPUT 
+// BUFFER_INPUT 
+
+DIGITAL_OUTPUT  start_fb, stop_fb,expired;
+ANALOG_OUTPUT output_bar;
+STRING_OUTPUT time_started$, remaining_time$;
+
+
+INTEGER startHour,startMinute,startSeconds,SeedSeconds;
+INTEGER started;
+
+LONG_INTEGER EndTimeInSec;
+LONG_INTEGER CurTimeInSec;
+
+FUNCTION DoTimeLoop()
+{
+	LONG_INTEGER nRemainingSeconds;
+	INTEGER nHour,nMin,nSec;
+	INTEGER nRemHour;
+	INTEGER nRemMin;
+	INTEGER nRemSec;
+	
+	WHILE(started > 0)
+	{
+		nHour = GetHourNum();
+		nMin = GetMinutesNum();
+		nSec = GetSecondsNum();
+		CurTimeInSec = nHour * 3600 + nMin * 60 + nSec;
+		nRemainingSeconds = EndTimeInSec - CurTimeInSec;
+		
+		output_bar = nRemainingSeconds * 65535 / SeedSeconds;
+		
+		if (nRemainingSeconds = 0)
+		{	
+			started = 0;		
+			start_fb = 0;
+			stop_fb = 1;			
+			pulse(50,expired);
+			break;
+		}
+		else
+		{
+			nRemHour = nRemainingSeconds / 3600;
+			nRemMin = (nRemainingSeconds - (nRemHour * 3600)) / 60;
+			nRemSec = nRemainingSeconds - (nRemHour * 3600) - (nRemMin * 60);
+			makestring(remaining_time$,"%02u:%02u:%02u",nRemHour,nRemMin,nRemSec);
+		}
+		delay(100);
+	}
+}
+
+/*******************************************************************************************
+  Event Handlers
+*******************************************************************************************/
+PUSH start
+{
+	IF (seedvalue_in_seconds > 0)
+	{
+		stop_fb = 0;
+		start_fb = 1;
+		startHour = GetHourNum();
+		startMinute = GetMinutesNum();
+		startSeconds = GetSecondsNum();
+		makestring(time_started$,"%02u:%02u:%02u",startHour,startMinute,startSeconds);
+		SeedSeconds = seedvalue_in_seconds;
+		EndTimeInSec = startHour * 3600 + startMinute * 60 + startSeconds + SeedSeconds;
+		started = 1;
+		DoTimeLoop();
+	}
+}
+
+PUSH stop
+{
+	started = 0;
+	start_fb = 0;
+	stop_fb = 1;
+	startHour = 99;
+	startMinute = 99;
+	startSeconds = 99;
+	makestring(remaining_time$,"00:00:00");
+	makestring(time_started$,"%02u:%02u:%02u",startHour,startMinute,startSeconds);
+}
+
+/*******************************************************************************************
+  Main()
+******************************************************************************************/
+Function Main()
+{
+	started = 0;
+	WaitForInitializationComplete();
+	start_fb = 0;
+	stop_fb = 1;
+}
+

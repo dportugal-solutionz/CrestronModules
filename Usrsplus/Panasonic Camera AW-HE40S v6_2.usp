@@ -1,0 +1,742 @@
+/*
+      Originally By: Daniel Portugal
+          daniel.portugal@spinitar.com
+
+      version 6.2.0 - by dportugal
+      - added analog inputs for speed control
+
+    version 6.1.0 - by dportugal
+    - cp3 current fw v1.8001.4788.20471 (Feb 10 2022)
+    - issue: power tcpconnection not connecting after first connection.
+    - removed threadafes from event headers
+    - added conditional to push events to only execute when disconnected.
+    Version 6.0.1 - philip.kopyscinski@spinitar.com
+    Changed:
+    Flipped the zoom in and out offset calculations. The camera was responding opposide as expected.
+
+      --------------------------------
+      Version 6
+      due to slow connection response separate TCP Clients are used to give better response to buttons.
+      it was also found push events could create multiple tcp clients that don't close connections properly when push events are stacked quickly.
+      when the clients are stuck there's no way to disconnect them.
+*/
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#DEFINE_CONSTANT MAX_PRESETS 8
+#DEFINE_CONSTANT PTZDELAY 10
+
+DIGITAL_INPUT
+    _SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,power_on
+    ,power_off
+    ,power_toggle
+    ,tilt_up
+    ,tilt_down
+    ,pan_left
+    ,pan_right
+    ,zoom_in
+    ,zoom_out
+    ,enable_polling
+    ,force_disconnect
+    ,_SKIP_
+    ,debug_on
+    ,_SKIP_
+    ,recall_preset[MAX_PRESETS]
+    ,save_preset[MAX_PRESETS]
+    ;
+
+ANALOG_INPUT
+    panspeed_pct,
+    tiltspeed_pct,
+    zoomspeed_pct
+    ;
+
+DIGITAL_OUTPUT
+    _SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,_SKIP_
+    ,power_on_fb
+    ,power_off_fb
+    ;
+
+ANALOG_OUTPUT
+    panspeed_pct_fb
+    ,tiltspeed_pct_fb
+    ,zoomspeed_pct_fb
+    ,_skip_
+    ,tcpPower_status
+    ,tcpTilt_status
+    ,tcpTiltStop_status
+    ,tcpPan_status
+    ,tcpPanStop_status
+    ,tcpZoom_status
+    ,tcpZoomStop_status
+    ,tcpPreset_status
+    ,tcpPoll_status
+    ,_skip_
+    ;
+
+STRING_OUTPUT
+    debug$
+    ;
+
+STRING_PARAMETER IpAddress[25];
+
+INTEGER_PARAMETER pan_speed,tilt_speed,zoom_speed;
+#BEGIN_PARAMETER_PROPERTIES pan_speed,tilt_speed,zoom_speed
+    propValidUnits = unitDecimal;
+    propDefaultUnit = unitDecimal;
+    propBounds = 0d , 49d;
+    propDefaultvalue = 10d;
+#END_PARAMETER_PROPERTIES
+
+INTEGER powerstate;
+INTEGER panspeed, tiltspeed,zoomspeed;
+
+TCP_CLIENT tcpPower[200];
+TCP_CLIENT tcpPan[200];
+TCP_CLIENT tcpPanStop[200];
+TCP_CLIENT tcpTilt[200];
+TCP_CLIENT tcpTiltStop[200];
+TCP_CLIENT tcpZoom[200];
+TCP_CLIENT tcpZoomStop[200];
+TCP_CLIENT tcpPreset[200];
+TCP_CLIENT tcpPoll[200];
+
+STRING cmdPower[100];
+STRING cmdPan[100];
+STRING cmdTilt[100];
+STRING cmdZoom[100];
+STRING cmdPreset[100];
+STRING cmdPoll[100];
+
+FUNCTION UpdateSpeedFb()
+{
+    panspeed_pct_fb = panspeed * 65535 / 49;
+    tiltspeed_pct_fb = tiltspeed * 65535 / 49;
+    zoomspeed_pct_fb = zoomspeed * 65535 / 49;
+}
+
+PUSH power_on
+{
+    if (tcpPower_status = 0 || tcpPower_status=3 || tcpPower_status=4 || tcpPower_status=5)
+    {
+        cmdPower = "GET /cgi-bin/aw_ptz?cmd=\x2523O1&res=1 HTTP/1.0\n\n";
+        SocketDisconnectClient(tcpPower);
+        delay(10);
+        SocketConnectClient(tcpPower,IpAddress,80,0);
+        //delay(25);
+        //SocketSend(tcpPower,cmdPower);
+        //SocketDisconnectClient(tcpPower);
+        powerstate = 1;
+        power_off_fb = 0;
+        power_on_fb = 1;
+        delay(50);
+    }
+    else
+        if (debug_on) debug$ = "power not sent, tcp client not disconnected";
+}
+
+PUSH power_off
+{
+    if (tcpPower_status = 0 || tcpPower_status=3 || tcpPower_status=4 || tcpPower_status=5)
+    {
+        cmdPower = "GET /cgi-bin/aw_ptz?cmd=\x2523O0&res=1 HTTP/1.0\n\n";
+        SocketDisconnectClient(tcpPower);
+        delay(10);
+        SocketConnectClient(tcpPower,IpAddress,80,0);
+        powerstate = 0;
+        power_on_fb = 0;
+        power_off_fb = 1;
+        delay(50);
+    }
+    else
+        if (debug_on) debug$ = "power not sent, tcp client not disconnected";
+}
+
+PUSH power_toggle
+{
+    if (tcpPower_status = 0 || tcpPower_status=3 || tcpPower_status=4 || tcpPower_status=5)
+    {
+        if (powerstate = 0)
+        {
+            powerstate = 1;
+            power_off_fb = 0;
+            power_on_fb = 1;
+        }
+        else
+        {
+            powerstate = 0;
+            power_on_fb = 0;
+            power_off_fb = 1;
+        }
+        makestring(cmdPower,"GET /cgi-bin/aw_ptz?cmd=\x2523O%u&res=1 HTTP/1.0\n\n",powerstate);
+        SocketDisconnectClient(tcpPower);
+        delay(10);
+        SocketConnectClient(tcpPower,IpAddress,80,0);
+        delay(50);
+    }
+    else
+        if (debug_on) debug$ = "power not sent, tcp client not disconnected";
+}
+
+PUSH tilt_up
+{
+    integer tilt;
+    if (tcpTilt_status = 0 || tcpTilt_status = 3 || tcpTilt_status = 4 || tcpTilt_status = 5)
+    {
+        tilt = 50 + tiltspeed;
+        makestring(cmdTilt,"GET /cgi-bin/aw_ptz?cmd=\x2523T%u&res=1 HTTP/1.0\n\n",tilt);
+
+        SocketDisconnectClient(tcpTiltStop);
+        SocketDisconnectClient(tcpTilt);
+        SocketConnectClient(tcpTilt,IpAddress,80,0);
+
+        delay(PTZDELAY);
+        while(tilt_up)
+            delay(PTZDELAY);
+
+        SocketDisconnectClient(tcpTiltStop);
+        SocketDisconnectClient(tcpTilt);
+        SocketConnectClient(tcpTiltStop,IpAddress,80,0);
+    }
+    else
+        if (debug_on) debug$ = "tilt not sent, tcp client not disconnected";
+}
+
+PUSH tilt_down
+{
+    integer tilt;
+    if (tcpTilt_status = 0 || tcpTilt_status = 3 || tcpTilt_status = 4 || tcpTilt_status = 5)
+    {
+        tilt = 50 - tiltspeed;
+        makestring(cmdTilt,"GET /cgi-bin/aw_ptz?cmd=\x2523T%u&res=1 HTTP/1.0\n\n",tilt);
+
+        SocketDisconnectClient(tcpTiltStop);
+        SocketDisconnectClient(tcpTilt);
+        SocketConnectClient(tcpTilt,IpAddress,80,0);
+
+        delay(PTZDELAY);
+        while(tilt_down)
+            delay(PTZDELAY);
+
+        SocketDisconnectClient(tcpTiltStop);
+        SocketDisconnectClient(tcpTilt);
+        SocketConnectClient(tcpTiltStop,IpAddress,80,0);
+    }
+    else
+        if (debug_on) debug$ = "tilt not sent, tcp client not disconnected";
+}
+
+PUSH pan_left
+{
+    integer pan;
+    if (tcpPan_status= 0 || tcpPan_status = 3 || tcpPan_status = 4 || tcpPan_status = 5)
+    {
+        pan = 50 - panspeed;
+        makestring(cmdPan,"GET /cgi-bin/aw_ptz?cmd=\x2523P%u&res=1 HTTP/1.0\n\n",pan);
+
+        SocketDisconnectClient(tcpPanStop);
+        SocketDisconnectClient(tcpPan);
+        SocketConnectClient(tcpPan,IpAddress,80,0);
+
+        delay(PTZDELAY);
+        while(pan_left)
+            delay(PTZDELAY);
+
+        SocketDisconnectClient(tcpPanStop);
+        SocketDisconnectClient(tcpPan);
+        SocketConnectClient(tcpPanStop,IpAddress,80,0);
+    }
+    else
+        if (debug_on) debug$ = "pan not sent, tcp client not disconnected";
+}
+
+PUSH pan_right
+{
+    integer pan;
+    if (tcpPan_status = 0 || tcpPan_status = 3 || tcpPan_status = 4 || tcpPan_status = 5)
+    {
+        pan = 50 + panspeed;
+        makestring(cmdPan,"GET /cgi-bin/aw_ptz?cmd=\x2523P%u&res=1 HTTP/1.0\n\n",pan);
+
+        SocketDisconnectClient(tcpPanStop);
+        SocketDisconnectClient(tcpPan);
+        SocketConnectClient(tcpPan,IpAddress,80,0);
+
+        delay(PTZDELAY);
+        while(pan_right)
+            delay(PTZDELAY);
+
+        SocketDisconnectClient(tcpPanStop);
+        SocketDisconnectClient(tcpPan);
+        SocketConnectClient(tcpPanStop,IpAddress,80,0);
+    }
+    else
+        if (debug_on) debug$ = "pan not sent, tcp client not disconnected";
+}
+
+PUSH zoom_in
+{
+    integer zoom;
+    if (tcpZoom_status = 0 || tcpZoom_status = 3 || tcpZoom_status = 4 || tcpZoom_status = 5)
+    {
+        zoom = 50 + zoomspeed;
+
+        makestring(cmdZoom,"GET /cgi-bin/aw_ptz?cmd=\x2523Z%u&res=1 HTTP/1.0\n\n",zoom);
+
+        SocketDisconnectClient(tcpZoomStop);
+        SocketDisconnectClient(tcpZoom);
+        SocketConnectClient(tcpZoom,IpAddress,80,0);
+
+        delay(PTZDELAY);
+    while(zoom_in)
+            delay(PTZDELAY);
+
+        SocketDisconnectClient(tcpZoomStop);
+        SocketDisconnectClient(tcpZoom);
+        SocketConnectClient(tcpZoomStop,IpAddress,80,0);
+    }
+    else
+        if (debug_on) debug$ = "zoom not sent, tcp client not disconnected";
+}
+
+PUSH zoom_out
+{
+    integer zoom;
+    if (tcpZoom_status = 0 || tcpZoom_status = 3 || tcpZoom_status = 4 || tcpZoom_status = 5)
+    {
+        zoom = 50 - zoomspeed;
+        makestring(cmdZoom,"GET /cgi-bin/aw_ptz?cmd=\x2523Z%u&res=1 HTTP/1.0\n\n",zoom);
+
+        SocketDisconnectClient(tcpZoomStop);
+        SocketDisconnectClient(tcpZoom);
+        SocketConnectClient(tcpZoom,IpAddress,80,0);
+
+        delay(PTZDELAY);
+        while(zoom_out)
+            delay(PTZDELAY);
+
+        SocketDisconnectClient(tcpZoomStop);
+        SocketDisconnectClient(tcpZoom);
+        SocketConnectClient(tcpZoomStop,IpAddress,80,0);
+    }
+    else
+        if (debug_on) debug$ = "zoom not sent, tcp client not disconnected";
+}
+
+PUSH save_preset
+{
+    integer x;
+    x = getlastmodifiedarrayindex();
+    x = x - 1;
+    makestring(cmdPreset,"GET /cgi-bin/aw_ptz?cmd=\x2523M%02u&res=1 HTTP/1.0\n\n",x);
+    if (tcpPreset_status = 0 || tcpPreset_status = 3 || tcpPreset_status = 4 || tcpPreset_status = 5)
+    {
+        SocketDisconnectClient(tcpPreset);
+        delay(10);
+        SocketConnectClient(tcpPreset,IpAddress,80,0);
+    }
+    else
+        if (debug_on) debug$ = "save preset not sent, tcp client not disconnected";
+}
+
+PUSH recall_preset
+{
+    integer x;
+    x = getlastmodifiedarrayindex();
+    x = x - 1;
+    makestring(cmdPreset,"GET /cgi-bin/aw_ptz?cmd=\x2523R%02u&res=1 HTTP/1.0\n\n",x);
+    if (tcpPreset_status = 0 || tcpPreset_status = 3 || tcpPreset_status = 4 || tcpPreset_status = 5)
+    {
+        SocketDisconnectClient(tcpPreset);
+        SocketConnectClient(tcpPreset,IpAddress,80,0);
+    }
+    else
+        if (debug_on) debug$ = "recall preset not sent, tcp client not disconnected";
+}
+
+CHANGE panspeed_pct
+{
+    panspeed = panspeed_pct * 49 / 65535;
+    UpdateSpeedFb();
+}
+CHANGE tiltspeed_pct
+{
+    tiltspeed = tiltspeed_pct * 49 / 65535;
+    UpdateSpeedFb();
+}
+CHANGE zoomspeed_pct
+{
+    zoomspeed = zoomspeed_pct * 49 / 65535;
+    UpdateSpeedFb();
+}
+/*
+THREADSAFE RELEASE tilt_up
+{
+    SocketDisconnectClient(tcpTilt);
+    SocketDisconnectClient(tcpTiltStop);
+    SocketConnectClient(tcpTiltStop,IpAddress,80,0);
+}
+
+THREADSAFE RELEASE tilt_down
+{
+    SocketDisconnectClient(tcpTilt);
+    SocketDisconnectClient(tcpTiltStop);
+    SocketConnectClient(tcpTiltStop,IpAddress,80,0);
+}
+
+THREADSAFE RELEASE pan_left
+{
+    SocketDisconnectClient(tcpPan);
+    SocketDisconnectClient(tcpPanStop);
+    SocketConnectClient(tcpPanStop,IpAddress,80,0);
+}
+
+THREADSAFE RELEASE pan_right
+{
+    SocketDisconnectClient(tcpPan);
+    SocketDisconnectClient(tcpPanStop);
+    SocketConnectClient(tcpPanStop,IpAddress,80,0);
+}
+
+THREADSAFE RELEASE zoom_in
+{
+    SocketDisconnectClient(tcpZoom);
+    SocketDisconnectClient(tcpZoomStop);
+    SocketConnectClient(tcpZoomStop,IpAddress,80,0);
+}
+
+
+THREADSAFE RELEASE zoom_out
+{
+    SocketDisconnectClient(tcpZoom);
+    SocketDisconnectClient(tcpZoomStop);
+    SocketConnectClient(tcpZoomStop,IpAddress,80,0);
+}
+
+*/
+PUSH enable_polling
+{
+    while(enable_polling)
+    {
+        SocketDisconnectClient(tcpPoll);
+        cmdPoll = "GET /cgi-bin/aw_ptz?cmd=\x2523O&res=1 HTTP/1.0\n\n";
+        SocketConnectClient(tcpPoll,IpAddress,80,0);
+        DELAY(1000);
+    }
+}
+
+PUSH force_disconnect
+{
+    SocketDisconnectClient(tcpPower);
+    SocketDisconnectClient(tcpPan);
+    SocketDisconnectClient(tcpPanStop);
+    SocketDisconnectClient(tcpTilt);
+    SocketDisconnectClient(tcpTiltStop);
+    SocketDisconnectClient(tcpZoom);
+    SocketDisconnectClient(tcpZoomStop);
+    SocketDisconnectClient(tcpPreset);
+    SocketDisconnectClient(tcpPoll);
+}
+
+SOCKETCONNECT tcpPower
+{
+    if (debug_on) makestring(debug$,"sending power=%s",cmdPower);
+    SocketSend(tcpPower,cmdPower);
+}
+SOCKETCONNECT tcpPan
+{
+    if (debug_on) makestring(debug$,"sending pan=%s",cmdPan);
+    SocketSend(tcpPan,cmdPan);
+}
+SOCKETCONNECT tcpPanStop
+{
+    if (debug_on) debug$ = "sending panstop=GET /cgi-bin/aw_ptz?cmd=\x2523P50&res=1 HTTP/1.0\n\n";
+    SocketSend(tcpPanStop,"GET /cgi-bin/aw_ptz?cmd=\x2523P50&res=1 HTTP/1.0\n\n");
+}
+SOCKETCONNECT tcpTilt
+{
+    if (debug_on) makestring(debug$,"sending tilt=%s",cmdTilt);
+    SocketSend(tcpTilt,cmdTilt);
+}
+SOCKETCONNECT tcpTiltStop
+{
+    if (debug_on) debug$ = "sending tiltstop=GET /cgi-bin/aw_ptz?cmd=\x2523T50&res=1 HTTP/1.0\n\n";
+    SocketSend(tcpTiltStop,"GET /cgi-bin/aw_ptz?cmd=\x2523T50&res=1 HTTP/1.0\n\n");
+}
+SOCKETCONNECT tcpZoom
+{
+    if (debug_on) makestring(debug$,"sending zoom=%s",cmdZoom);
+    SocketSend(tcpZoom,cmdZoom);
+}
+SOCKETCONNECT tcpZoomStop
+{
+    if (debug_on) debug$ = "sending zoomstop=GET /cgi-bin/aw_ptz?cmd=\x2523Z50&res=1 HTTP/1.0\n\n";
+    SocketSend(tcpZoomStop,"GET /cgi-bin/aw_ptz?cmd=\x2523Z50&res=1 HTTP/1.0\n\n");
+}
+SOCKETCONNECT tcpPreset
+{
+    if (debug_on) makestring(debug$,"sending preset=%s",cmdPreset);
+    SocketSend(tcpPreset,cmdPreset);
+}
+SOCKETCONNECT tcpPoll
+{
+    if (debug_on) makestring(debug$,"sending poll=%s",cmdPoll);
+    SocketSend(tcpPoll,cmdPoll);
+}
+
+SOCKETDISCONNECT tcpPower
+{
+    string temp[200];
+    if (debug_on)
+    {
+        temp = tcpPower.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+
+    clearbuffer(tcpPower.SocketRxBuf);
+}
+SOCKETDISCONNECT tcpPan
+{
+    string temp[200];
+    if (debug_on)
+    {
+        temp = tcpPan.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+    clearbuffer(tcpPan.SocketRxBuf);
+}
+SOCKETDISCONNECT tcpPanStop
+{
+    string temp[200];
+    if (debug_on)
+    {
+        temp = tcpPanStop.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+    clearbuffer(tcpPanStop.SocketRxBuf);
+
+}
+SOCKETDISCONNECT tcpTilt
+{
+    string temp[200];
+    if (debug_on)
+    {
+        temp = tcpTilt.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+    clearbuffer(tcpTilt.SocketRxBuf);
+}
+SOCKETDISCONNECT tcpTiltStop
+{
+    string temp[200];
+    if (debug_on)
+    {
+        temp = tcpTiltStop.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+    clearbuffer(tcpTiltStop.SocketRxBuf);
+}
+
+SOCKETDISCONNECT tcpZoom
+{
+    string temp[200];
+    if (debug_on)
+    {
+        temp = tcpZoom.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+    clearbuffer(tcpZoom.SocketRxBuf);
+}
+SOCKETDISCONNECT tcpZoomStop
+{
+    string temp[200];
+    if (debug_on)
+    {
+        temp = tcpZoomStop.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+    clearbuffer(tcpZoomStop.SocketRxBuf);
+}
+
+SOCKETDISCONNECT tcpPreset
+{
+    string temp[200];
+    if (debug_on)
+    {
+        temp = tcpPreset.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+    clearbuffer(tcpPreset.SocketRxBuf);
+}
+
+SOCKETDISCONNECT tcpPoll
+{
+    string temp[200];
+    string str[200];
+
+    if (debug_on)
+    {
+        temp = tcpPoll.SocketRxBuf;
+        while(find("\x0A",temp) > 0)
+            debug$ = remove("\x0A",temp);
+        debug$ = temp;
+    }
+    temp = tcpPoll.SocketRxBuf;
+    str = remove("\n\n",temp);
+    if (debug_on) debug$="Parsing:"+temp;
+    if (find("p1",temp))
+    {
+        powerstate = 1;
+        power_off_fb = 0;
+        power_on_fb = 1;
+    }
+    else if (find("p0",temp))
+    {
+        powerstate = 0;
+        power_on_fb = 0;
+        power_off_fb = 1;
+    }
+    clearbuffer(tcpPoll.SocketRxBuf);
+}
+
+SOCKETSTATUS tcpPower
+{
+    tcpPower_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpPower status=%d",tcpPower_status);
+
+    if (tcpPower_status = 3		//connection failed
+        || tcpPower_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpPower);
+    }
+}
+
+SOCKETSTATUS tcpPan
+{
+    tcpPan_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpPan status=%d",tcpPan_status);
+
+    if (tcpPan_status = 3		//connection failed
+        || tcpPan_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpPan);
+    }
+}
+SOCKETSTATUS tcpPanStop
+{
+    tcpPanStop_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpPanStop status=%d",tcpPanStop_status);
+
+    if (tcpPanStop_status = 3		//connection failed
+        || tcpPanStop_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpPanStop);
+    }
+}
+
+SOCKETSTATUS tcpTilt
+{
+    tcpTilt_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpTilt status=%d",tcpTilt_status);
+
+    if (tcpTilt_status = 3		//connection failed
+        || tcpTilt_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpTilt);
+    }
+}
+
+
+SOCKETSTATUS tcpTiltStop
+{
+    tcpTiltStop_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpTiltStop status=%d",tcpTiltStop_status);
+
+    if (tcpTiltStop_status = 3		//connection failed
+        || tcpTiltStop_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpTiltStop);
+    }
+}
+
+SOCKETSTATUS tcpZoom
+{
+    tcpZoom_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpZoom status=%d",tcpZoom_status);
+
+    if (tcpZoom_status = 3		//connection failed
+        || tcpZoom_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpZoom);
+    }
+}
+
+SOCKETSTATUS tcpZoomStop
+{
+    tcpZoomStop_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpZoomStop status=%d",tcpZoomStop_status);
+
+    if (tcpZoomStop_status = 3		//connection failed
+        || tcpZoomStop_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpZoomStop);
+    }
+}
+
+
+SOCKETSTATUS tcpPreset
+{
+    tcpPreset_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpPreset status=%d",tcpPreset_status);
+
+    if (tcpPreset_status = 3		//connection failed
+        || tcpPreset_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpPreset);
+    }
+}
+
+SOCKETSTATUS tcpPoll
+{
+    tcpPoll_status = SocketGetStatus();
+    if (debug_on) makestring(debug$,"tcpPoll status=%d",tcpPoll_status);
+
+    if (tcpPoll_status = 3		//connection failed
+        || tcpPoll_status = 7) 	//dns lookup failed
+    {
+        SocketDisconnectClient(tcpPoll);
+    }
+}
+
+FUNCTION Main()
+{
+    panspeed = pan_speed;
+    tiltspeed = tilt_speed;
+    zoomspeed = zoom_speed;
+    UpdateSpeedFb();
+    WaitForInitializationComplete();
+}

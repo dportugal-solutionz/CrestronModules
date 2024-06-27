@@ -1,0 +1,185 @@
+/*
+v 2.3
+- added compiler directive for 4 series.
+*/
+
+#CATEGORY "9" // Memory
+#DEFINE_CONSTANT MAXIO 64
+#DEFINE_CONSTANT MAXLENGTH 254
+#DEFINE_CONSTANT EOL "\n"
+#DEFAULT_VOLATILE
+
+#ANALOG_SERIAL_EXPAND InputsWithOutputs
+
+#HELP_BEGIN
+writes the string inputs to a file
+since the file is CR-LF delimited, string inputs should not contain CR-LF.
+
+string inputs are sent to the outputs if and only if the input <> output.
+file is written whenever any input changes
+#HELP_END
+
+
+DIGITAL_INPUT LoadFile;
+STRING_INPUT FullFileName[200];
+STRING_INPUT TextIn$[MAXIO][MAXLENGTH];
+DIGITAL_OUTPUT loading_file,writing_file;
+STRING_OUTPUT TextOut$[MAXIO];
+
+                      
+STRING data[MAXIO][MAXLENGTH];
+INTEGER nWriteBusy;
+
+STRING_FUNCTION ReadLine(signed_integer handle)
+{
+	string buffer[200], temp[200];
+	integer found;
+	signed_long_integer filepos;
+	
+	#IF_DEFINED debug
+		trace ("\n@ReadLine:%ld",FILESEEK (handle,0,SEEK_CUR) );
+	#ENDIF
+	
+	found=0;
+	temp="";
+	buffer="";
+	while (found=0 && FILEEOF (handle)=0)
+	{
+		fileread(handle,buffer,200);
+		found = find(EOL,buffer);
+	}
+	
+	if (found > 0)
+	{
+		temp = remove(EOL,buffer);
+		filepos = FILESEEK (handle,0,SEEK_CUR);					//get current location
+		FILESEEK (handle,filepos - len(buffer),SEEK_SET);		//set to new location
+		return (temp);
+	}
+	else
+	{
+		return (temp);
+	}
+}
+
+
+FUNCTION WriteDataFile()
+{
+	signed_integer handle;
+	integer x;
+	string buffer[300];
+			
+	if (nWriteBusy = 0)
+	{
+		nWriteBusy = 1;
+		writing_file = 1;		
+		StartFileOperations();
+		
+        handle = -1;           
+       
+        #IF_SERIES4
+        	handle = fileopenshared(FullFileName,_O_WRONLY | _O_TRUNC | _O_TEXT | _O_CREAT);
+			if (handle < 0)
+				GENERATEUSERERROR ("Unable to open file for writing %s(%d)", FullFileName,handle);
+		#ENDIF
+		
+		#IF_SERIES3
+			handle = fileopenshared(FullFileName,_O_WRONLY | _O_TRUNC | _O_TEXT | _O_CREAT);
+			if (handle < 0)
+				GENERATEUSERERROR ("Unable to open file for writing %s(%d)", FullFileName,handle);
+		#ENDIF
+		
+		#IF_SERIES2
+			handle = fileopen(FullFileName,_O_WRONLY | _O_TRUNC | _O_TEXT | _O_CREAT);
+			if (handle S< 0)
+				GENERATEUSERERROR ("Unable to open file for writing %s(%d)", FullFileName,handle);
+		#ENDIF
+		
+		if (handle >= 0)
+		{
+			for(x = 1 to MAXIO)
+			{
+				makestring(buffer,"%s\n",data[x]);
+				filewrite(handle,buffer,len(buffer));
+			}
+			filewrite(handle,"\n",2);
+		}
+		fileclose(handle);
+		EndFileOperations();
+		
+		nWriteBusy = 0;
+		writing_file = 0;
+	}
+}
+
+FUNCTION ReadDataFile()
+{
+	signed_integer handle;
+	integer x;
+	string buffer[300];
+	
+	loading_file = 1;
+	StartFileOperations();
+	handle = -1;
+	#IF_SERIES4
+		handle = fileopenshared(FullFileName, _O_RDONLY | _O_TEXT);
+		if (handle < 0)
+			GENERATEUSERERROR ("Unable to open file for reading %s(%d)", FullFileName,handle);
+	#ENDIF
+
+	#IF_SERIES3
+		handle = fileopenshared(FullFileName, _O_RDONLY | _O_TEXT);
+		if (handle < 0)
+			GENERATEUSERERROR ("Unable to open file for reading %s(%d)", FullFileName,handle);
+	#ENDIF			
+	
+	#IF_SERIES2
+		handle = fileopen(FullFileName, _O_RDONLY | _O_TEXT);
+		if (handle S< 0)
+			GENERATEUSERERROR ("Unable to open file for reading %s(%d)", FullFileName,handle);
+	#ENDIF
+		
+	if (handle >= 0)
+	{
+		for(x = 1 to MAXIO)
+		{
+			buffer = ReadLine(handle);
+			buffer = left(buffer,len(buffer)-2);
+			data[x] = buffer;
+			if (issignaldefined(TextOut$[x]))
+				TextOut$[x] = data[x];
+		}
+	}
+	
+	fileclose(handle);
+	EndFileOperations();
+	
+	loading_file = 0;	
+}
+
+PUSH LoadFile
+{
+	ReadDataFile();
+}
+
+CHANGE TextIn$
+{
+	integer x;
+	
+	x = getlastmodifiedarrayindex();
+	
+	if (data[x] <> TextIn$[x])
+		TextOut$[x] = TextIn$[x];
+
+	data[x] = TextIn$[x];
+	
+	while(nWriteBusy <> 0)
+		delay(50);
+	
+	WriteDataFile();
+}
+
+FUNCTION Main()
+{
+	WaitforInitializationComplete();
+}

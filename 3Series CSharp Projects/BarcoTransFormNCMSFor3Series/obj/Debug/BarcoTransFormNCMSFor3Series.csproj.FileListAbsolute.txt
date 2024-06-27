@@ -1,0 +1,12 @@
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\obj\Debug\ResolveAssemblyReference.cache
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\BarcoTransFormNCMSFor3Series.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\BarcoTransFormNCMSFor3Series.pdb
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\SimplSharpCustomAttributesInterface.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\SimplSharpHelperInterface.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\SimplSharpNewtonsoft.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\SimplSharpReflectionInterface.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\SimplSharpTimerEventInterface.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\SimplSharpSQLHelperInterface.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\bin\Debug\Newtonsoft.Json.Compact.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\obj\Debug\BarcoTransFormNCMSFor3Series.dll
+C:\libs\Crestron\simplsharp\BarcoTransFormNCMS\BarcoTransFormNCMSFor3Series\obj\Debug\BarcoTransFormNCMSFor3Series.pdb

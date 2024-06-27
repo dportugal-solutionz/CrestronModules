@@ -1,0 +1,338 @@
+/*
+  by Daniel Portugal
+  v3
+  - changed tcp client connection logic
+  v2
+  - added internal tcp client
+  - added string input ip_address$
+*/
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+
+#DEFINE_CONSTANT MODE_PREVIEW 0
+#DEFINE_CONSTANT MODE_OUTPUT 1
+
+#HELP_BEGIN
+  for use with Blackmagic Hyperdeck using TCP/IP.
+  Port 9993
+#HELP_END
+
+DIGITAL_INPUT
+  _skip_
+  ,play
+  ,stop
+  ,pause
+  ,rec
+  ,next
+  ,prev
+  ,fwd
+  ,rew
+  ,slot1
+  ,slot2
+  ,preview_mode
+  ,output_mode
+  ,_skip_
+  ,connect
+  ,debug
+  ;
+
+STRING_INPUT
+  ip_address$[32],
+  passthru_tx$[255];
+
+DIGITAL_OUTPUT
+  _skip_
+  ,play_fb
+  ,stop_fb
+  ,_skip_
+  ,rec_fb
+  ,_skip_
+  ,_skip_
+  ,fwd_fb
+  ,rew_fb
+  ,slot1_fb
+  ,slot2_fb
+  ,preview_mode_fb
+  ,output_mode_fb
+  ,_skip_
+  ,connected
+  ;
+
+STRING_PARAMETER Ip_Address[32];
+#BEGIN_PARAMETER_PROPERTIES Ip_Address
+   propValidUnits = unitString;
+   propDefaultUnit = unitString;
+   propDefaultValue = "1.2.3.4";
+#END_PARAMETER_PROPERTIES
+
+TCP_CLIENT tcpClient[500];
+
+INTEGER
+  nTransport
+  ,nMode
+  ,nSlot
+  ,nKeepAlive //flag that is set to 1, when in the keep alive loop.
+  ;
+
+STRING ipAddress[32];
+
+
+FUNCTION DoDisconnect()
+{
+    if (debug) trace("\n[BlackMagic Hyperdeck] Disconnecting from %s",ipAddress);
+    SocketDisconnectClient(tcpClient);
+}
+
+FUNCTION DoConnect()
+{
+    if (   tcpClient.SocketStatus = 0  // not connected
+        //  = 1  // waiting for connection
+        //  = 2  // connected
+        || tcpClient.SocketStatus = 3  // connection failed
+        || tcpClient.SocketStatus = 4  // connection broken remotely
+        || tcpClient.SocketStatus = 5  // connection broken locally
+        //  = 6  // performing dns lookup
+        //  = 8  // dns name resolved
+        )
+    {
+        if (debug) trace("\n[BlackMagic Hypderdeck] Trying to Connect to %s\n",IpAddress);
+        SocketConnectClient(tcpClient,ipAddress,9993,1);
+    }
+    else
+    {
+        if (debug) trace("\n[BlackMagic Hypderdeck] connection to %s already in progress",IpAddress);
+    }
+}
+
+
+FUNCTION Send(string cmd)
+{
+    if (connected)
+    {
+        if(debug) trace("\n[BlackMagic Hyperdeck]Tx=%s\n",cmd);
+        SocketSend(tcpClient,cmd);
+    }
+    else
+    {
+        if (debug) trace("\n[Blackmagic Hyperdeck] cannot send. not connected.");
+    }
+}
+
+
+FUNCTION UpdateFb()
+{
+  if (nMode = MODE_OUTPUT)
+  {
+    preview_mode_fb = 0;
+    output_mode_fb = 1;
+  }
+  else
+  {
+    output_mode_fb = 0;
+    preview_mode_fb = 1;
+  }
+
+  switch(nTransport)
+  {
+    case (1):
+    {
+      stop_fb   = 0;
+      rec_fb    = 0;
+      fwd_fb    = 0;
+      rew_fb    = 0;
+      play_fb    = 1;
+    }
+
+    case (2):
+    {
+      play_fb   = 0;
+      rec_fb    = 0;
+      stop_fb    = 0;
+      rew_fb    = 0;
+      fwd_fb    = 1;
+    }
+
+    case (3):
+    {
+      play_fb   = 0;
+      rec_fb    = 0;
+      fwd_fb    = 0;
+      stop_fb    = 0;
+      rew_fb    = 1;
+    }
+
+    case (4):
+    {
+      play_fb   = 0;
+      stop_fb    = 0;
+      fwd_fb    = 0;
+      rew_fb    = 0;
+      rec_fb    = 1;
+    }
+
+    default:
+    {
+      play_fb   = 0;
+      rec_fb    = 0;
+      fwd_fb    = 0;
+      rew_fb    = 0;
+      stop_fb    = 1;
+    }
+  }
+  switch(nSlot)
+  {
+  	case(1):
+	{
+		slot2_fb = 0;
+		slot1_fb = 1;
+	}
+    case(2):
+    {
+        slot1_fb = 0;
+        slot2_fb = 1;
+    }
+    default:
+    {
+        slot1_fb = 0;
+        slot2_fb = 0;
+    }
+  }
+}
+
+FUNCTION KeepAlive()
+{
+    while(connected)
+    {
+        nKeepAlive = 1;
+        DELAY(6000);
+        Send("transport info\x0A");
+    }
+    nKeepAlive = 0;
+}
+
+
+FUNCTION Init()
+{
+  Send("notify: transport: true\x0A");
+  Send("notify: slot: true\x0A");
+  Send("notify: configuration: true\x0A");
+  Send("remote: enable: true\x0A");
+  Send("slot info\x0A");
+  Send("transport info\x0A");
+  Send("configuration\x0A");
+  Send("preview: enable: true\x0A");
+  nMode = MODE_PREVIEW;
+  output_mode_fb = 0;
+  preview_mode_fb = 1;
+  if (nKeepAlive = 0)
+      KeepAlive();
+}
+
+
+FUNCTION ParseRx(string rx)
+{
+	string temp[500];
+	while(find("\x0A",rx) > 0)
+    {
+        temp = remove("\x0A",rx);
+        if (debug) trace("\n[BlackMagic Hyperdeck] Parsing=%s\n",temp);
+        switch(1)
+        {
+            case(find("status: play",temp) > 0)           : { nTransport = 1; nMode = MODE_OUTPUT; }
+            case(find("status: stopped",temp) > 0)        : { nTransport = 0; nMode = MODE_OUTPUT; }
+            case(find("status: forward",temp)> 0)         : { nTransport = 2; nMode = MODE_OUTPUT; }
+            case(find("status: rewind",temp)> 0)          : { nTransport = 3; nMode = MODE_OUTPUT; }
+            case(find("status: record",temp)> 0)          : { nTransport = 4; nMode = MODE_OUTPUT; }
+            case(find("slot id: 1",temp)> 0)              : nSlot = 1;
+            case(find("slot id: 2",temp)> 0)              : nSlot = 2;
+            case(find("slot id: none",temp)> 0)           : nSlot = 0;
+            case(find("active slot: 1",temp)> 0)          : nSlot = 1;
+            case(find("active slot: 2",temp)> 0)          : nSlot = 2;
+            case(find("active slot: none",temp)> 0)       : nSlot = 0;
+            case(find("111 remote control disabled",temp)): socketsend(tcpClient,"remote: enable: true\x0A");
+            case(find("status: preview",temp)> 0)         : { nTransport = 0; nMode = MODE_PREVIEW; }
+
+        }
+    }
+    UpdateFb();
+}
+
+PUSH play          { Send("play\x0A"); }
+PUSH stop          { Send("stop\x0A"); }
+PUSH pause         { Send("play: speed: 0\x0A"); }
+PUSH rec           { Send("record\x0A"); }
+PUSH next          { Send("goto: clip id: +1\x0A"); }
+PUSH prev          { Send("goto: clip id: -1\x0A"); }
+PUSH fwd           { Send("play: speed: 400\x0A"); }
+PUSH rew           { Send("play: speed: -400\x0A"); }
+PUSH slot1         { Send("slot select: slot id: 1\x0A"); }
+PUSH slot2         { Send("slot select: slot id: 2\x0A"); }
+PUSH preview_mode  { Send("preview: enable: true\x0A"); }
+PUSH output_mode   { Send("preview: enable: false\x0A"); }
+
+SOCKETRECEIVE tcpClient
+{
+    string temp[500];
+    temp = tcpClient.SocketRxBuf;
+    ClearBuffer(tcpClient.SocketRxBuf);
+    ParseRx(temp);
+}
+
+PUSH connect
+{
+    DoConnect();
+}
+
+RELEASE connect
+{
+    DoDisconnect();
+}
+
+SOCKETCONNECT tcpClient
+{
+    clearbuffer(tcpClient.SocketRxBuf);
+    if(debug) trace("\n[BlackMagic Hyperdeck] Connected to %s\n",ipAddress);
+    GenerateUserNotice("[BlackMagic Hyperdeck] Connected to %s",ipAddress);
+    connected = 1;
+    Init();
+}
+
+SOCKETDISCONNECT tcpClient
+{
+    if(debug) trace("\n[BlackMagic Hyperdeck] Disconnected from %s\n",ipAddress);
+    GenerateUserError("[BlackMagic Hyperdeck] Disconnected");
+    connected = 0;
+    clearbuffer(tcpClient.SocketRxBuf);
+}
+
+SOCKETSTATUS tcpClient
+{
+    if(debug) trace("\n[BlackMagic Hyperdeck] Socket Status=%d\n",tcpClient.SocketStatus);
+}
+
+CHANGE ip_address$
+{
+    ipAddress = ip_address$;
+    if (connected > 0)
+    {
+        DoDisconnect();
+        delay(50);
+        DoConnect();
+    }
+}
+
+CHANGE passthru_tx$
+{
+    Send(passthru_tx$);
+}
+
+FUNCTION MAIN()
+{
+    nTransport = 0;
+    nMode = 0;
+    ipAddress = Ip_Address; //copy parameter to internal variable
+    nKeepAlive = 0;
+    WaitForInitializationComplete();
+}

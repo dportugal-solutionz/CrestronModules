@@ -1,0 +1,474 @@
+/*
+    By Daniel Portugal
+*/
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#DEFINE_CONSTANT DEBUGHEADER "ShureP300"
+#DEFINE_CONSTANT RECONNECT_DELAY 3000 //30 seconds
+#DEFINE_CONSTANT RX_BUFFER_SIZE 1000
+#HELP_BEGIN
+Controls a Shure P300 using IP on port 2202.
+
+Input Channels:
+01-08    Dante Inputs with Mic Processing
+09-10    Dante Inputs
+11-12    Analog Inputs
+13       USB Input
+14       Mobile Input
+
+Output Channels
+01-02    Dante Outputs
+03-04    Analog Outputs
+05       USB Outputs
+06       Mobile Output
+07       Automixer Output
+08       AEC Reference
+09-14    Dante Outputs (firmware 4.1x and newer)
+
+*_channel_gain      expected value 0d to 65535d, will send values to P300 scaled to within min and max.
+*_min               expected value between 0d to 1400d, should be less than max
+*_max               expected value between 0d to 1400d, should be more than min
+At boot min and max will be 0 and 1400 respectively.
+  
+v4
+- fixed output min max setting
+- added additional trace
+v2
+- fixed gain scaling on input
+#HELP_END
+
+/********************************************/
+DIGITAL_INPUT
+    connect,
+    debug
+    ;
+DIGITAL_OUTPUT
+    connected,
+    _skip_
+    ;
+ANALOG_INPUT
+    _skip_
+    ;
+ANALOG_OUTPUT
+    tcp_status
+    ;
+
+STRING_INPUT
+    ip_address$[32],
+    tx$[512]
+    ;
+
+STRING_OUTPUT
+    _skip_,
+    _skip_,
+    rx$
+    ;
+
+DIGITAL_INPUT
+    recall_preset[10],
+    input_mute_on[14],
+    input_mute_off[14],
+    input_mute_toggle[14],
+    output_mute_on[14],
+    output_mute_off[14],
+    output_mute_toggle[14]
+    ;
+ANALOG_INPUT
+    input_channel_gain[14],
+    output_channel_gain[14],
+    input_min[14],
+    input_max[14],
+    output_min[14],
+    output_max[14]
+    ;
+DIGITAL_OUTPUT
+    input_mute_on_fb[14],
+    input_mute_off_fb[14],
+    output_mute_on_fb[14],
+    output_mute_off_fb[14]
+    ;
+ANALOG_OUTPUT
+    input_channel_gain_fb[14],
+    output_channel_gain_fb[14]
+    ;
+/********************************************
+ PARAMETERS
+********************************************/
+STRING_PARAMETER IpAddress[32];
+/********************************************
+ STRUCTURES
+********************************************/
+
+/********************************************
+ GLOBALS
+********************************************/
+TCP_CLIENT tcpClient[RX_BUFFER_SIZE];
+STRING sIpAddress[32];
+INTEGER nIpPort;
+INTEGER ChannelMuteState[28], ChannelGainState[28], ChannelMin[28], ChannelMax[28];
+/********************************************
+ FUNCTIONS
+********************************************/
+FUNCTION TraceTxt(string txt)
+{
+    if (debug) trace("\n[%s-%s] %s\n",DEBUGHEADER,IpAddress,txt);
+}
+
+FUNCTION UpdateMuteFb(integer ch)
+{
+    integer index;
+    if (ch > 0 && ch <= 14)
+    {
+        if (ChannelMuteState[ch] > 0)
+        {
+            input_mute_off_fb[ch] = 0;
+            input_mute_on_fb[ch] = 1;
+        }
+        else
+        {
+            input_mute_on_fb[ch] = 0;
+            input_mute_off_fb[ch] = 1;
+        }
+    }
+    else if (ch > 14 && ch <= 28)
+    {
+        index = ch - 14;
+        if (ChannelMuteState[ch] > 0)
+        {
+            output_mute_off_fb[index] = 0;
+            output_mute_on_fb[index] = 1;
+        }
+        else
+        {
+            output_mute_on_fb[index] = 0;
+            output_mute_off_fb[index] = 1;
+        }
+    }
+}
+FUNCTION UpdateGainFb(integer ch)
+{
+	string t[200];
+    integer index, value, span, minV, maxV;
+    if (ch > 0 && ch <= 14)
+    {
+        if (ChannelGainState[ch] <= ChannelMin[ch])
+            input_channel_gain_fb[ch]  = 0;
+        else if (ChannelGainState[ch] >= ChannelMax[ch])
+            input_channel_gain_fb[ch] = 65535;
+        else
+        {
+        	minV = ChannelMin[ch];
+        	maxV = ChannelMax[ch];
+            span = maxV - minV;
+            if (span > 1400) //
+            	span = 1400;
+            value = ChannelGainState[ch] - minV;
+            input_channel_gain_fb[ch] = value * 65535 / span;
+        }
+    }
+    else if (ch > 14 && ch <= 28)
+    {
+        index = ch - 14;
+        if (ChannelGainState[ch] <= ChannelMin[ch])
+            output_channel_gain_fb[index]  = 0;
+        else if (ChannelGainState[ch] >= ChannelMax[ch])
+            output_channel_gain_fb[index] = 65535;
+        else
+        {				
+            minV = ChannelMin[ch];
+        	maxV = ChannelMax[ch];
+            span = maxV - minV;
+            makestring(t,"ch:%d, min:%d max:%d span:%d",ch, minV, maxV, span);
+			TraceTxt(t);
+            if (span > 1400) //
+            	span = 1400;
+            value = ChannelGainState[ch] - minV;
+            output_channel_gain_fb[index] = value * 65535 / span;
+        }
+    }
+}
+
+FUNCTION ParseRx(string rx)
+{
+    string str[100];
+    string temp[100];
+    integer ch;
+    TraceTxt("ParsingRx");
+    rx$ = rx;
+    while( find(">",rx) > 0 )
+    {
+        temp = remove("<",rx);
+        temp = remove(">",rx);
+        temp = left(temp,len(temp) - 1);
+        TraceTxt(temp);
+        if (find("REP ", temp) > 0)
+        {
+            str = remove("REP ",temp);
+            ch = atoi(remove(" ",temp));
+            if (ch > 0 && ch <= 28)
+            {
+                switch(1)
+                {
+                    case(find("AUDIO_MUTE ",temp) > 0):
+                    {
+                        str = remove("AUDIO_MUTE ",temp);
+                        if (find("ON",temp) > 0)
+                            ChannelMuteState[ch] = 1;
+                        else
+                            ChannelMuteState[ch] = 0;
+                        UpdateMuteFb(ch);
+                    }
+                    case(find("AUDIO_GAIN_HI_RES ",temp) > 0):
+                    {
+                        str = remove("AUDIO_GAIN_HI_RES ",temp);
+                        ChannelGainState[ch] = atoi(temp);
+                        UpdateGainFb(ch);
+                    }
+                }
+            }
+        }
+    }
+}
+
+FUNCTION SendGain(integer ch, integer value) ///expected value = 0 to 65535
+{
+    string cmd[100];
+    integer span,scale;
+    integer minV, maxV;
+    makestring(cmd,"SendGain:%u %u",ch,value);
+    TraceTxt(cmd);
+    if (connected > 0)
+    {
+    	minV = ChannelMin[ch];
+    	maxV = ChannelMax[ch];
+        span = maxV - minV;
+        scale = minV + (value * span / 65535);
+		makestring(cmd,"min:%d max:%d span:%d scale:%d",minV, maxV, span, scale);
+		TraceTxt(cmd);
+        makestring(cmd,"< SET %02u AUDIO_GAIN_HI_RES %04u >",ch,scale);
+        TraceTxt(cmd);
+        SocketSend(tcpClient,cmd);
+    }
+
+}
+
+FUNCTION SendMute(integer ch, integer value)
+{
+    string cmd[100];
+    makestring(cmd,"SendMute:%u %u",ch,value);
+    TraceTxt(cmd);
+    if (connected > 0)
+    {
+        switch(value)
+        {
+            case(0): makestring(cmd,"< SET %02u AUDIO_MUTE OFF >",ch);
+            case(1): makestring(cmd,"< SET %02u AUDIO_MUTE ON >",ch);
+            case(2): makestring(cmd,"< SET %02u AUDIO_MUTE TOGGLE >",ch);
+        }
+        TraceTxt(cmd);
+        SocketSend(tcpClient,cmd);
+    }
+}
+
+FUNCTION GetChannel(integer ch)
+{
+    string cmd[100];
+    makestring(cmd,"GetChannel:%02u",ch);
+    TraceTxt(cmd);
+    makestring(cmd,"< GET %02u AUDIO_GAIN_HI_RES >",ch);
+    SocketSend(tcpClient,cmd);
+    DELAY(25);
+    makestring(cmd,"< GET %02u AUDIO_MUTE >",ch);
+    SocketSend(tcpClient,cmd);
+    DELAY(25);
+}
+
+/********************************************
+ EVENTS
+********************************************/
+PUSH connect
+{
+    if (len(sIpAddress) > 0)
+    {
+        if (nIpPort > 0)
+        {
+            TraceTxt("Connecting...");
+            SocketConnectClient(tcpClient,sIpAddress,nIpPort,0);
+        }
+        else
+            TraceTxt("Invalid Ip Port.");
+    }
+    else
+        TraceTxt("Invalid Ip Address.");
+}
+
+RELEASE connect
+{
+    if (connected = 1)
+    {
+        TraceTxt("Disconnecting.");
+        SocketDisconnectClient(tcpClient);
+    }
+}
+
+PUSH debug
+{
+	string t[200];
+	integer x;
+
+	for(x = 1 to 28)
+	{
+		makestring(t,"%02d min:%04d max:%04d", x, ChannelMin[x], ChannelMax[x]);
+		TraceTxt(t);
+	}
+}
+
+SOCKETCONNECT tcpClient
+{
+    integer x;
+    TraceTxt("Connected");
+    connected = 1;
+    for(x=1 to 28)
+        GetChannel(x);
+}
+
+SOCKETDISCONNECT tcpClient
+{
+    TraceTxt("Disconnected");
+    connected = 0;
+}
+
+SOCKETSTATUS tcpClient
+{
+    string status[20];
+    makestring(status,"TCP Status=%u",tcpClient.SocketStatus);
+    TraceTxt(status);
+    tcp_status = tcpClient.SocketStatus;
+}
+
+SOCKETRECEIVE tcpClient
+{
+    string temp[RX_BUFFER_SIZE];
+    temp = tcpClient.SocketRxBuf;
+    ClearBuffer(tcpClient.SocketRxBuf);
+    ParseRx(temp);
+}
+
+CHANGE ip_address$
+{
+    sIpAddress = ip_address$;
+}
+
+CHANGE tx$
+{
+    if (connected = 1)
+        SocketSend(tcpClient,tx$);
+}
+
+PUSH recall_preset
+{
+    integer x;
+    string cmd[50];
+    if(connected = 1)
+    {
+        x = getlastmodifiedarrayindex();
+        makestring(cmd,"< SET PRESET %02u >",x);
+        SocketSend(tcpClient,cmd);
+    }
+}
+
+PUSH input_mute_on
+{
+    integer x;
+    x = getlastmodifiedarrayindex();
+    SendMute(x,1);
+}
+PUSH input_mute_off
+{
+    integer x;
+    x = getlastmodifiedarrayindex();
+    SendMute(x,0);
+}
+PUSH input_mute_toggle
+{
+    integer x;
+    x = getlastmodifiedarrayindex();
+    SendMute(x,2);
+}
+PUSH output_mute_on
+{
+    integer x;
+    x = getlastmodifiedarrayindex() + 14;
+    SendMute(x,1);
+}
+PUSH output_mute_off
+{
+    integer x;
+    x = getlastmodifiedarrayindex() + 14;
+    SendMute(x,0);
+}
+PUSH output_mute_toggle
+{
+    integer x;
+    x = getlastmodifiedarrayindex() + 14;
+    SendMute(x,2);
+}
+CHANGE input_channel_gain
+{
+    integer x;
+    integer value;
+    x = getlastmodifiedarrayindex();
+    value = input_channel_gain[x];// * 1400 / 65535;
+    SendGain(x,value);
+}
+CHANGE output_channel_gain
+{
+    integer x,i;
+    integer value;
+    i = getlastmodifiedarrayindex();
+    x = i + 14;
+    value = output_channel_gain[i];// * 1400 / 65535;
+    SendGain(x,value);
+}
+
+CHANGE input_min
+{
+    integer x;
+    x = getlastmodifiedarrayindex();
+    ChannelMin[x] = input_min[x];
+}
+CHANGE input_max
+{
+    integer x;
+    x = getlastmodifiedarrayindex();
+    ChannelMax[x] = input_max[x];
+}
+CHANGE output_min
+{
+    integer x;
+	integer i;
+    x = getlastmodifiedarrayindex();
+	i = x + 14;
+    ChannelMin[i] = output_min[x];
+}
+CHANGE output_max
+{
+    integer x;
+	integer i;
+    x = getlastmodifiedarrayindex();
+	i = x + 14;
+    ChannelMax[i] = output_max[x];
+}
+/********************************************
+ MAIN
+********************************************/
+FUNCTION Main()
+{
+    sIpAddress = IpAddress;
+    nIpPort = 2202;
+    SetArray(ChannelMin,0);
+    SetArray(ChannelMax,1400);
+    WaitForInitializationComplete();
+}

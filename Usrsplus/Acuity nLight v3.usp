@@ -1,0 +1,450 @@
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+
+/*
+v3 removed poll after every command
+put poll in a retime wait after cmd sent.
+*/
+
+#DEFINE_CONSTANT POLLCMD "\xA5\x05\x0C\x56\xFA"
+
+DIGITAL_INPUT
+	ALL_OFF
+	,ENABLE_POLLING
+	;
+	
+BUFFER_INPUT
+	RX$[1000]
+	;
+
+DIGITAL_INPUT
+	SCENE_RECALL[4]
+	,SET_ZONE_LEVEL[16]
+	,ZONE_ON[16]
+	,ZONE_OFF[16]
+	,ZONE_UP[16]
+	,ZONE_DOWN[16,16]
+    ;
+    
+ANALOG_INPUT
+	ZONE_LEVEL[16]
+	,ZONE_VALUE[16,16]
+	;
+
+STRING_OUTPUT
+	TX$
+	;
+
+DIGITAL_OUTPUT
+	ZONE_RELAYS_CLOSED[16]
+	;
+
+ANALOG_OUTPUT
+	ZONE_LEVEL_FB[16]
+	,ZONE_LEVEL_VALUE_FB[16,16]
+	;
+
+INTEGER_PARAMETER up_down_delta;
+
+#BEGIN_PARAMETER_PROPERTIES up_down_delta
+	propValidUnits = unitDecimal;
+	propDefaultUnit = unitDecimal;
+	propDefaultValue = 5d;
+	propList = {5d,"5%"},{10d,"10%"},{15d,"15%"},{20d,"20%"},{25d,"25%"};	
+#END_PARAMETER_PROPERTIES
+
+
+INTEGER PAUSE_POLLING;
+INTEGER SendOk;
+STRING cmdQ[1000];
+INTEGER inSendLoop;
+INTEGER inSendTimer;
+
+INTEGER inSendPoll;
+INTEGER inSendPollTimer;
+
+FUNCTION SendPoll()
+{
+	if (find(POLLCMD,cmdQ) = 0)
+		cmdQ = cmdQ + POLLCMD;
+}
+
+FUNCTION SendTimer()
+{
+	inSendTimer = 1;
+	wait(100,wSendTimer)
+	{
+		inSendTimer = 0;
+		SendOk = 1;
+	}
+}
+
+FUNCTION StartSendTimer()
+{
+	if (inSendTimer)
+		retimewait(100,wSendTimer);
+	else
+		SendTimer();
+}
+
+FUNCTION PollAfterCmdTimer()
+{
+	inSendPoll = 1;
+	wait(200, wSendPollAfterCmd)
+	{
+		inSendPoll = 0;
+		TX$ = POLLCMD;
+	}
+}
+
+FUNCTION SendPollAfterCmd()
+{
+	if (inSendPoll)
+		retimewait(200, wSendPollAfterCmd);
+	else
+		PollAfterCmdTimer();
+}
+
+FUNCTION SendLoop()
+{
+	string temp[100];
+	integer pos1;
+	integer pos2;
+	while(find("\xA5",cmdQ) > 0)
+	{
+		inSendLoop = 1;
+		if (SendOk = 1)
+		{
+			pos1 = find("\xA5",cmdQ);
+			pos2 = find("\xA5",cmdQ,pos1+1);
+			
+			if (pos2 = 0)
+			{
+				temp = cmdQ;
+				cmdQ = "";
+			}
+			else
+			{
+				if (pos1 > 1)
+				{
+					temp = removebylength(pos1-1,cmdQ); //remove any left overs
+					pos2 = find("\xA5",cmdQ,2);
+				}
+				temp = removebylength(pos2-1,cmdQ);
+			}
+			TX$ = temp;
+			StartSendTimer();
+			SendOk = 0;
+		}
+		else
+		{
+			delay(10);
+		}
+	}
+	inSendLoop = 0;
+}
+
+	
+STRING_FUNCTION SendCmd(string subject, string data)
+{
+	integer x;
+	integer ckA;
+	integer ckB;
+	string temp[255];
+	integer ln;
+	
+	ckA = 0;
+	ckB = 0;
+	ln = 5 + len(data); //len(header)=1 + len(ln)=1 + len(subj)=1 + len[data]  + len(ck) = 2;
+	
+	temp = "\xA5" + chr(ln) + subject + data;
+	
+	for(x = 1 to len(temp))
+	{
+		if (x % 2 = 0) //even checksum
+		{
+			ckB = ckB ^ byte(temp,x);
+		}
+		else //odd checksum
+		{
+			ckA = ckA ^ byte(temp,x);				
+		}				
+	}
+	ckA = NOT(ckA);
+	ckB = NOT(ckB);
+	cmdQ = cmdQ + "\xA5" + chr(ln) + subject + data + chr(ckA) + chr(ckB);
+	SendPollAfterCmd();
+	if (inSendLoop = 0)
+		SendLoop();
+}
+
+FUNCTION SetOn(integer zone)
+{
+	integer value;
+	string data[3];	
+	value = 0;	
+	data = chr(zone) + chr(0x01) + chr(value);	
+	SendCmd(chr(0x7A),data);
+}
+FUNCTION SetOff(integer zone)
+{
+	integer value;
+	string data[3];	
+	value = 0;	
+	data = chr(zone) + chr(0x02) + chr(value);	
+	SendCmd(chr(0x7A),data);
+
+}
+FUNCTION SetUp(integer zone)
+{
+	integer value;
+	string data[3];	
+	value = up_down_delta;	
+	data = chr(zone) + chr(0x03) + chr(value);	
+	SendCmd(chr(0x7A),data);
+
+}
+FUNCTION SetDown(integer zone)
+{
+	integer value;
+	string data[3];	
+	value = up_down_delta;	
+	data = chr(zone) + chr(0x04) + chr(value);	
+	SendCmd(chr(0x7A),data);
+}
+FUNCTION SetLevel(integer zone, integer level)
+{
+	integer value;
+	string data[3];	
+	value = level * 100 / 65535;	
+	data = chr(zone) + chr(0x05) + chr(value);	
+	SendCmd(chr(0x7A),data);		
+}
+
+FUNCTION SetValue(integer zone, integer value)
+{
+	string data[3];	
+	if (value >= 100)
+		value = 100;
+	data = chr(zone) + chr(0x05) + chr(value);	
+	SendCmd(chr(0x7A),data);		
+}
+
+
+FUNCTION RecallScene(integer scn)
+{
+	SendCmd(chr(0x85),chr(scn));
+}
+
+THREADSAFE PUSH ALL_OFF
+{
+	integer x;
+	
+	PAUSE_POLLING = 2;	
+	delay(50);
+	
+	for(x=1 to 16)
+	{
+		PAUSE_POLLING = 2;
+		SetOff(x);
+		delay(20);		
+	}		
+}
+
+THREADSAFE PUSH SCENE_RECALL
+{
+	integer x;
+	x = getlastmodifiedarrayindex();
+	PAUSE_POLLING = 1;	
+	delay(50);
+	RecallScene(x);
+}
+
+
+THREADSAFE PUSH SET_ZONE_LEVEL
+{
+	integer x;
+	x = getlastmodifiedarrayindex();
+	PAUSE_POLLING = 1;	
+	delay(50);
+	SetLevel(x,ZONE_LEVEL[x]);
+}
+
+THREADSAFE PUSH ZONE_ON
+{
+	integer x;
+	x = getlastmodifiedarrayindex();
+	SetOn(x);
+}
+
+THREADSAFE PUSH ZONE_OFF
+{
+	integer x;	
+	x = getlastmodifiedarrayindex();
+	PAUSE_POLLING = 1;	
+	delay(50);
+	SetOff(x);
+}
+
+THREADSAFE PUSH ZONE_UP
+{
+	integer x;
+	x = getlastmodifiedarrayindex();
+	PAUSE_POLLING = 1;	
+	delay(50);
+	SetUp(x);
+}
+
+THREADSAFE PUSH ZONE_DOWN
+{
+	integer x;
+	x = getlastmodifiedarrayindex();
+	PAUSE_POLLING = 1;	
+	delay(50);
+	SetDown(x);
+}
+
+THREADSAFE CHANGE ZONE_LEVEL
+{
+	integer x;
+	x = getlastmodifiedarrayindex();
+	
+	IF (SET_ZONE_LEVEL[x])
+	{
+		ZONE_LEVEL_FB[x] = ZONE_LEVEL[x];
+		PAUSE_POLLING = 1;	
+		delay(50);
+		SetLevel(x,ZONE_LEVEL[x]);
+	}
+}
+
+THREADSAFE CHANGE ZONE_VALUE
+{
+	integer x;
+	x = getlastmodifiedarrayindex();
+	
+	ZONE_LEVEL_VALUE_FB[x] = ZONE_VALUE[x];
+	PAUSE_POLLING = 1;	
+	delay(50);
+	SetValue(x,ZONE_VALUE[x]);
+}
+
+THREADSAFE CHANGE RX$
+{
+	string temp[100];
+	string data[100];
+	integer x,y,z;
+	integer complete;
+	
+	complete  = 0;
+	
+	x = find("\xA5",RX$);
+	
+	if (x > 0)
+	{
+		y = byte(RX$,x + 1);
+		if (len(RX$) >= (x + y - 1))
+			complete = 1;					
+	}
+	
+	if (complete > 0)
+	{			
+		SendOk = 1;
+		data = remove("\xA5",RX$);  //remove header
+		x = getc(RX$) - 2; //get length - header - this byte.
+		temp = removebylength(x,RX$); 
+		
+		temp = left(temp,len(temp) - 2); //remove checksum bytes
+		
+		y = byte(temp,1);
+		
+		if (y = 0x0D) //poll response
+		{
+			data = right(temp,len(temp)-1); //remove subject byte
+					
+			x = byte(data,1);
+			y = byte(data,2);
+			
+			ZONE_RELAYS_CLOSED[1]	 = y & 0x0001;
+			ZONE_RELAYS_CLOSED[2]	 = y & 0x0002;
+			ZONE_RELAYS_CLOSED[3]	 = y & 0x0004;
+			ZONE_RELAYS_CLOSED[4]	 = y & 0x0008;
+			ZONE_RELAYS_CLOSED[5]	 = y & 0x0010;
+			ZONE_RELAYS_CLOSED[6]	 = y & 0x0020;
+			ZONE_RELAYS_CLOSED[7]	 = y & 0x0040;
+			ZONE_RELAYS_CLOSED[8]	 = y & 0x0080;
+			ZONE_RELAYS_CLOSED[9]	 = x & 0x0001;
+			ZONE_RELAYS_CLOSED[10]	 = x & 0x0002;
+			ZONE_RELAYS_CLOSED[11]	 = x & 0x0004;
+			ZONE_RELAYS_CLOSED[12]	 = x & 0x0008;
+			ZONE_RELAYS_CLOSED[13]	 = x & 0x0010;
+			ZONE_RELAYS_CLOSED[14]	 = x & 0x0020;
+			ZONE_RELAYS_CLOSED[15]	 = x & 0x0040;
+			ZONE_RELAYS_CLOSED[16]	 = x & 0x0080;
+			
+            ZONE_LEVEL_FB[1] =  byte(data,3) * 65535 / 100;
+            ZONE_LEVEL_FB[2] =  byte(data,4) * 65535 / 100;
+            ZONE_LEVEL_FB[3] =  byte(data,5) * 65535 / 100;
+            ZONE_LEVEL_FB[4] =  byte(data,6) * 65535 / 100;
+            ZONE_LEVEL_FB[5] =  byte(data,7) * 65535 / 100;
+            ZONE_LEVEL_FB[6] =  byte(data,8) * 65535 / 100;
+            ZONE_LEVEL_FB[7] =  byte(data,9) * 65535 / 100;
+            ZONE_LEVEL_FB[8] =  byte(data,10) * 65535 / 100;
+            ZONE_LEVEL_FB[9] =  byte(data,11) * 65535 / 100;
+            ZONE_LEVEL_FB[10] = byte(data,12) * 65535 / 100;
+            ZONE_LEVEL_FB[11] = byte(data,13) * 65535 / 100;
+            ZONE_LEVEL_FB[12] = byte(data,14) * 65535 / 100;
+            ZONE_LEVEL_FB[13] = byte(data,15) * 65535 / 100;
+            ZONE_LEVEL_FB[14] = byte(data,16) * 65535 / 100;
+            ZONE_LEVEL_FB[15] = byte(data,17) * 65535 / 100;
+            ZONE_LEVEL_FB[16] = byte(data,18) * 65535 / 100;
+
+			ZONE_LEVEL_VALUE_FB[1] =  byte(data,3); 
+            ZONE_LEVEL_VALUE_FB[2] =  byte(data,4); 
+            ZONE_LEVEL_VALUE_FB[3] =  byte(data,5);
+            ZONE_LEVEL_VALUE_FB[4] =  byte(data,6);
+            ZONE_LEVEL_VALUE_FB[5] =  byte(data,7); 
+            ZONE_LEVEL_VALUE_FB[6] =  byte(data,8); 
+            ZONE_LEVEL_VALUE_FB[7] =  byte(data,9); 
+            ZONE_LEVEL_VALUE_FB[8] =  byte(data,10);
+            ZONE_LEVEL_VALUE_FB[9] =  byte(data,11);
+            ZONE_LEVEL_VALUE_FB[10] = byte(data,12);
+            ZONE_LEVEL_VALUE_FB[11] = byte(data,13);
+            ZONE_LEVEL_VALUE_FB[12] = byte(data,14);
+            ZONE_LEVEL_VALUE_FB[13] = byte(data,15);
+            ZONE_LEVEL_VALUE_FB[14] = byte(data,16);
+            ZONE_LEVEL_VALUE_FB[15] = byte(data,17);
+            ZONE_LEVEL_VALUE_FB[16] = byte(data,18);
+		}   
+	}       
+	if (len(RX$) > 900)
+		clearbuffer(RX$);
+}           
+            
+PUSH ENABLE_POLLING
+{           
+	WHILE(ENABLE_POLLING)
+	{       
+		DELAY(1000);
+		if (PAUSE_POLLING > 0)
+		{   
+			if (PAUSE_POLLING > 10)
+				PAUSE_POLLING = 2;
+			PAUSE_POLLING = PAUSE_POLLING - 1;
+		}
+		else
+		{
+		    //header  len    subject   ckA      ckB
+			//TX$ = "\xA5" + "\x05"+ "\x0C" + "\x56" + "\xFA";
+			SendPoll();
+		}
+	}
+}
+
+
+FUNCTION Main()
+{
+	SendOk = 1;
+	WaitForInitializationComplete();
+}

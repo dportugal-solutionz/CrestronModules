@@ -1,0 +1,289 @@
+
+/*******************************************************************************************
+  SIMPL+ Module Information
+  (Fill in comments below)
+*******************************************************************************************/
+/*
+Dealer Name:
+System Name:
+System Number:
+Programmer:
+Comments:
+*/
+
+/*******************************************************************************************
+  Compiler Directives
+*******************************************************************************************/
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#DEFINE_CONSTANT SEND_MIN_FREQUENCY 50
+
+#HELP_BEGIN
+
+#HELP_END
+
+/*******************************************************************************************
+  Include Libraries
+*******************************************************************************************/
+
+/*******************************************************************************************
+  DIGITAL, ANALOG and SERIAL INPUTS and OUTPUTS
+*******************************************************************************************/
+DIGITAL_INPUT
+	power_on
+	,power_off
+	,power
+	,input_hdmi
+	,pic_mute_on
+	,pic_mute_off
+	,pic_mute
+	,enable_polling
+	;
+
+BUFFER_INPUT 
+	rx[1000];
+
+DIGITAL_OUTPUT 
+	power_on_fb
+	,power_off_fb
+	,_skip_
+	,_skip_
+	,pic_mute_on_fb
+	,pic_mute_off_fb
+	;
+ANALOG_OUTPUT 
+	_skip_
+	,lamphours
+	;
+	
+STRING_OUTPUT 
+	tx;
+
+/*******************************************************************************************
+  Global Variables
+*******************************************************************************************/
+INTEGER nPower,nPicMute,nPausePolling,nPoll;
+INTEGER OkToSend,Sending;
+STRING queuedcmd[50];
+/*******************************************************************************************
+  Functions
+*******************************************************************************************/
+FUNCTION SendGate()
+{
+	OkToSend = 0;
+	wait(SEND_MIN_FREQUENCY,wSendGate)
+	{
+		OkToSend = 1;
+	}
+}
+
+FUNCTION Send(string str)
+{
+	if (OkToSend = 1)
+	{
+		queuedcmd = "";
+		tx = str;
+		SendGate();
+	}
+	else
+	{
+		queuedcmd = str;
+		if (Sending = 0)
+		{
+			while(OkToSend = 0)
+			{
+				Sending = 1;
+				processlogic();				
+			}
+			if (len(queuedcmd) > 0)
+			{
+				tx = queuedcmd;
+				queuedcmd = "";
+				SendGate();
+			}
+		}
+		Sending = 0;
+	}
+}
+
+
+
+FUNCTION UpdateFb()
+{
+	if(nPower > 0)
+	{
+		power_off_fb = 0;
+		power_on_fb = 1;
+		
+		if (nPicmute > 0)
+		{
+			pic_mute_off_fb = 0;
+			pic_mute_on_fb = 1;
+		}
+		else
+		{
+			pic_mute_on_fb = 0;
+			pic_mute_off_fb = 1;
+		}
+	}
+	else
+	{
+		power_on_fb = 0;
+		power_off_fb = 0;
+		pic_mute_on_fb = 0;
+		pic_mute_off_fb = 0;
+	}
+}
+
+
+/*******************************************************************************************
+  Event Handlers
+  (Uncomment and declare additional event handlers as needed)
+*******************************************************************************************/
+PUSH power_on
+{
+	nPausePolling = 5;
+	Send("\x02\x00\x00\x00\x00\x02");
+}
+
+PUSH power_off
+{	
+	nPausePolling = 5;
+	Send("\x02\x01\x00\x00\x00\x03");
+}
+
+PUSH power
+{
+	nPausePolling = 5;
+	if (power_on_fb)
+	{
+		Send("\x02\x00\x00\x00\x00\x02");
+	}
+	else
+	{
+		Send("\x02\x01\x00\x00\x00\x03");
+	}
+}
+
+PUSH pic_mute_on
+{
+	nPausePolling = 5;
+	Send("\x02\x10\x00\x00\x00\x12");
+}
+PUSH pic_mute_off
+{
+	nPausePolling = 5;
+	Send("\x02\x11\x00\x00\x00\x13");
+	
+}
+PUSH pic_mute
+{
+	nPausePolling = 5;
+	if (pic_mute_on_fb)
+	{
+		Send("\x02\x00\x00\x00\x00\x02");
+	}
+	else
+	{
+		Send("\x02\x01\x00\x00\x00\x03");
+	}
+}
+
+PUSH input_hdmi
+{
+	Send("");	
+}
+
+PUSH enable_polling
+{
+	while(enable_polling)
+	{
+		nPoll = nPoll + 1;
+		if (nPausePolling > 0)
+			nPausePolling = nPausePolling - 1;
+		else
+		{
+			switch(nPoll)
+			{
+				case (1): //query running status request
+				{
+					Send("\x00\x85\x00\x00\x01\x01\x87");
+				}
+				case (2): //lamp hours, lamp 1 in seconds
+				{
+					Send("\x03\x96\x00\x00\x02\x00\x01\x9C");						
+				}
+				case (3): //picture mute
+				{
+					Send("\x00\x85\x00\x00\x01\x03\x89");
+				}
+			}
+		}
+	}
+}
+
+CHANGE rx
+{
+	string temp[50];
+	string trash[50];
+	integer b[6];
+	long_integer value;
+	
+	switch(1)
+	{
+		case(left(rx,2) = "\x22\x00"): //power on ack
+		{
+			while(len(rx) < 6)
+				processlogic();
+			nPower = 1;				
+			UpdateFb();
+			ClearBuffer(rx);
+		}
+		case(left(rx,2) = "\x22\x01")://power off ack
+		{
+			while(len(rx) < 6)
+				processlogic();
+			nPower = 0;				
+			UpdateFb();
+			ClearBuffer(rx);
+		}
+		case(left(rx,5) = "\x23\x96\x00\x00\x06\"):
+		{
+			while(len(rx) < 11)
+				processlogic();
+			trash = remove("\x23\x96\x00\x00\x06",temp);
+			b[1] = getc(temp);
+			b[2] = getc(temp);
+			b[3] = getc(temp);
+			b[4] = getc(temp);
+			b[5] = getc(temp);
+			b[6] = getc(temp);
+			value = b[6];
+			value = value << 8;
+			value = value | b[5];
+			value = value << 8;
+			value = value | b[4];
+			value = value << 8;
+			value = value | b[3];
+			lamphours = value / 3600;
+		}
+		default:
+		{
+			clearbuffer(rx);
+		}
+	}
+}
+
+
+/*******************************************************************************************
+  Main()
+
+*******************************************************************************************/
+Function Main()
+{
+	OkToSend = 1;
+	Sending = 0;
+	WaitForInitializationComplete();
+}
+*/

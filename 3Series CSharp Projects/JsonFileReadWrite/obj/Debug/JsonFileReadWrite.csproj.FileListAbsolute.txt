@@ -1,0 +1,18 @@
+C:\Users\MatthewHughes\OneDrive - Solutionz\github\ControlSystemLibraries\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\JsonFileReadWrite.dll
+C:\Users\MatthewHughes\OneDrive - Solutionz\github\ControlSystemLibraries\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\JsonFileReadWrite.pdb
+C:\Users\MatthewHughes\OneDrive - Solutionz\github\ControlSystemLibraries\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\SimplSharpSQLHelperInterface.dll
+C:\Users\MatthewHughes\OneDrive - Solutionz\github\ControlSystemLibraries\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\Newtonsoft.Json.Compact.dll
+C:\Users\MatthewHughes\OneDrive - Solutionz\github\ControlSystemLibraries\Crestron\simplsharp\JsonFileReadWrite\obj\Debug\ResolveAssemblyReference.cache
+C:\Users\MatthewHughes\OneDrive - Solutionz\github\ControlSystemLibraries\Crestron\simplsharp\JsonFileReadWrite\obj\Debug\JsonFileReadWrite.dll
+C:\Users\MatthewHughes\OneDrive - Solutionz\github\ControlSystemLibraries\Crestron\simplsharp\JsonFileReadWrite\obj\Debug\JsonFileReadWrite.pdb
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\JsonFileReadWrite.dll
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\JsonFileReadWrite.pdb
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\SimplSharpCustomAttributesInterface.dll
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\SimplSharpHelperInterface.dll
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\SimplSharpNewtonsoft.dll
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\SimplSharpReflectionInterface.dll
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\SimplSharpSQLHelperInterface.dll
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\bin\Debug\Newtonsoft.Json.Compact.dll
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\obj\Debug\ResolveAssemblyReference.cache
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\obj\Debug\JsonFileReadWrite.dll
+C:\libs\Crestron\simplsharp\JsonFileReadWrite\obj\Debug\JsonFileReadWrite.pdb

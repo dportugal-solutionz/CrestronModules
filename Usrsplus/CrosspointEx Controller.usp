@@ -1,0 +1,64 @@
+/*
+    by Daniel Portugal
+    daniel.portugal@solutionzinc.com
+*/
+#CATEGORY "46" "CrosspointEx" // Custom
+#DEFAULT_VOLATILE
+#ENABLE_TRACE
+#ENABLE_STACK_CHECKING
+#HELP_BEGIN
+Part of CrosspointEx modules:
+* CrosspointEx Controller 
+* EquipmentCrosspointEx
+* ControlCrosspointEx
+
+These group of modules sends and receives digital, analog, and serial cues
+using a string address form of both the Cue and the Crosspoint.
+
+INPUTS
+=============
+ucmd		send one of the following commands. The result of the command will be printed to console
+* cxpex print all connections
+	prints connections from control to equipments
+* cxpex print all cxp
+	prints all control crosspoints
+* cxpex print all exp
+	prints all equipment crosspoints
+* cxpex print cxp 'address'
+	prints all cues in control crosspoint with 'address'
+* cxpex print exp 'address'
+	prints all cues in equipment crosspoint with 'address'
+* cxpex debug (0|1)
+	turn on/off debug
+
+
+OUTPUTS
+=============
+none
+
+PARAMETERS
+=============
+none
+
+#HELP_END
+
+
+string_input ucmd[100];
+
+#INCLUDEPATH "C:\libs\Crestron\simplsharp\MagicBus\MagicBus\bin\Debug"
+#USER_SIMPLSHARP_LIBRARY "CrosspointEx"
+
+integer x;
+CrosspointRouterUcmd xpointrouter;
+
+CHANGE ucmd
+{
+    string str[100];
+    str = ucmd;
+    xpointrouter.UserProgCommand(str);
+}
+
+function Main()
+{
+    WaitForInitializationComplete();
+}

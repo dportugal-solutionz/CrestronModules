@@ -1,0 +1,201 @@
+/*
+By Daniel Portugal
+*/
+
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+
+#DEFINE_CONSTANT MAX_WINDOWS 96
+#DEFINE_CONSTANT MAX_SOURCES 96
+
+
+//#INCLUDEPATH "C:\\Clients\\SpinitarCSharpLibrary\\BarcoTransFormNCMS\\bin\\Debug"
+#INCLUDEPATH "C:\\libs\\Crestron\\simplsharp\\BarcoTransFormNCMS\\BarcoTransFormNCMSFor3Series\\bin\\Debug"
+#USER_SIMPLSHARP_LIBRARY "BarcoTransFormNCMSFor3Series"
+
+
+digital_input
+    readFile
+    ,isConnected
+    ,debug;
+
+digital_output
+    file_loading
+    ,file_loaded
+    ;
+
+buffer_input
+    fromDevice[10240];
+
+string_output
+    loaded_file
+    ,Ip
+    ,IpPort
+    ,toDevice;
+
+ANALOG_INPUT
+    window_source[MAX_WINDOWS];
+
+ANALOG_OUTPUT
+    window_source_fb[MAX_WINDOWS];
+
+STRING_OUTPUT
+    source_names$[MAX_SOURCES]
+    ,window_source$[MAX_WINDOWS];
+
+string_parameter filedirectory[50],filepattern[50];
+#BEGIN_PARAMETER_PROPERTIES filedirectory
+   propDefaultUnit = unitString;
+   propDefaultValue = "/user/";
+#END_PARAMETER_PROPERTIES
+
+#BEGIN_PARAMETER_PROPERTIES filepattern
+   propDefaultUnit = unitString;
+   propDefaultValue = "*config.json";
+#END_PARAMETER_PROPERTIES
+
+BarcoCMS CMS;
+
+EventHandler OnWindowSource(BarcoCMS sender,StringArrayEventArgs args)
+{
+	integer src;
+	trace("\n[BarcoCMS S+] OnWindowSource %u",args.Index);
+    if (args.Index < MAX_WINDOWS)
+    {
+		trace("\n[BarcoCMS S+] value=%s",args.Value);
+        window_source$[args.Index + 1] = args.Value;
+		src=CMS.GetWindowCurrentSourceIndex(args.Index) + 1;
+		trace("\n[BarcoCMS S+] src=%u",src);
+        window_source_fb[args.Index+1] = src;
+    }
+}
+
+EventHandler OnFileName(BarcoCMS sender,StringEventArgs args)
+{
+	trace("\n[BarcoCMS S+] OnFileName %s\n",args.Value);
+    loaded_file = args.Value;
+}
+EventHandler SendTx(BarcoCMS sender, StringEventArgs args)
+{
+	trace("\n[BarcoCMS S+] SendTx %s\n",args.Value);
+    toDevice = args.Value;
+}
+EventHandler IsLoading(BarcoCMS sender, BoolEventArgs args)
+{
+	trace("\n[BarcoCMS S+] IsLoading %u\n",args.Value);
+    file_loading = args.Value;
+}
+EventHandler OnReadSuccessful(BarcoCMS sender, BoolEventArgs args)
+{
+    integer x;
+
+	trace("\n[BarcoCMS S+] OnReadSuccessful %u\n",args.Value);
+
+    file_loaded = (args.Value > 0);
+
+    if (file_loaded)
+    {
+    	Ip = CMS.Config.Ip;
+    	IpPort = itoa(CMS.Config.IpPort);
+        for(x = 1 to MAX_SOURCES)
+        {
+            if (x <= CMS.GetSourceCount())
+            {
+                source_names$[x] = CMS.GetSourceName(x-1);
+            }
+        }
+    }
+}
+EventHandler OnWindowActive(BarcoCMS sender, IntArrayEventArgs args)
+{
+    integer x;
+    integer src;
+
+	trace("\n[BarcoCMS S+] OnWindowActive %u %u\n",args.Index, args.Value);
+
+    if (args.Index < MAX_WINDOWS)
+    {
+        x = args.Index + 1;
+
+        if (args.Value = 0)
+        {
+            window_source_fb[x] = 0;
+            window_source$[x] = "";
+        }
+        else
+        {
+            src = CMS.GetWindowCurrentSourceIndex(args.Index);
+			trace("\n[BarcoCMS S+] OnWindowActive src = %u\n",src);
+            if (src < MAX_SOURCES)
+            {
+                window_source_fb[x] = src + 1;
+                window_source$[x] = CMS.GetSourceName(src);
+            }
+        }
+    }
+}
+
+PUSH readfile
+{
+    CMS.FileDirectory = filedirectory;
+    CMS.FilePattern = filepattern;
+    CMS.ReadFile();
+}
+PUSH isConnected
+{
+    CMS.Init();
+}
+
+CHANGE window_source
+{
+    integer window;
+    integer source;
+
+    if (file_loaded)
+    {
+        window = GetLastModifiedArrayIndex();
+        source = window_source[window];
+        CMS.SetPerspectiveSourceByIndex(source-1,window-1);
+    }
+}
+
+THREADSAFE CHANGE fromDevice
+{
+	string temp[10540];
+	while(1)
+	{
+		temp = gather("\n",fromDevice);
+		try
+		{
+		    CMS.ParseRx(temp);
+	    }
+	    catch
+	    {
+	    	trace("\n[BarcoCMS S+]Exception in receive.\n%s\n", GetExceptionMessage());
+	    }
+	}
+}
+PUSH debug
+{
+	Tracer.DebugOn();
+}
+RELEASE debug
+{
+	Tracer.DebugOff();
+}
+
+Function Main()
+{
+    RegisterEvent(CMS, OnWindowSourceChanged, OnWindowSource);
+    RegisterEvent(CMS, OnFileNameChanged, OnFileName);
+    RegisterEvent(CMS, SendToCMS, SendTx);
+    RegisterEvent(CMS, IsLoadingChanged, IsLoading);
+    //RegisterEvent(CMS, IsFoundChanged, IsFound);
+    RegisterEvent(CMS, OnReadSuccessfulChanged, OnReadSuccessful);
+    //RegisterEvent(CMS, OnReadFailedChanged, OnReadFailed);
+    RegisterEvent(CMS, OnWindowActiveChanged, OnWindowActive);
+    WaitForInitializationComplete();
+    Tracer.DebugOff();
+
+}

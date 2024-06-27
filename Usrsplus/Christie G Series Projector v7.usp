@@ -1,0 +1,704 @@
+/*
+	SPINITAR
+	by DPORTUGAL
+*/
+
+
+#DEFAULT_VOLATILE
+#ANALOG_SERIAL_EXPAND	InputsWithOutputs
+#DIGITAL_EXPAND			InputsWithOutputs
+
+
+#HELP_BEGIN
+Default Baud Rate: 115200 N,8,1
+v7
+- added buffer overflow detection
+
+v6
+- added remote control buttons
+
+v5
+- changed pic mute toggle to do KEY 2 with shutter query.
+
+v3
+-added logic for changing inputs once power on is detected.
+#HELP_END
+
+
+
+/*******************************************************************************************
+  DIGITAL, ANALOG and SERIAL INPUTS and OUTPUTS
+*******************************************************************************************/
+DIGITAL_INPUT
+	poll_enable
+	,_skip_
+	,power_on
+	,power_off
+	,power
+	,_skip_
+	,_skip_
+	,_skip_
+	,shutter_open
+	,shutter_close
+	,shutter_open_close_toggle
+	,_skip_
+	,input_1_vga
+	,input_2
+	,input_3
+	,input_4_hdmi
+	,input_5_dvi
+	,input_6_dp
+	,input_7_component
+	,input_8_svideo
+	,input_9_composite
+	,input_10_presenter
+	,input_11_cardreader
+	,input_12_miniusb
+	,_skip_
+	,persistent_input
+	,is_Laser
+	,_skip_
+	,rc_info
+	,rc_auto
+	,rc_1
+	,rc_2
+	,rc_3
+	,rc_4
+	,rc_5
+	,rc_6
+	,rc_7
+	,rc_8
+	,rc_9
+	,rc_0
+	,rc_help
+	,rc_hotkey
+	,rc_menu
+	,rc_test
+	,rc_shutter
+	,rc_exit
+	,rc_up
+	,rc_down
+	,rc_left
+	,rc_right
+	,rc_enter
+	,rc_input
+	,rc_osd
+	,rc_contrast
+	,rc_bright
+	,rc_focus_left
+	,rc_focus_right
+	,rc_proj
+	,rc_gamma
+	,rc_zoom_minus
+	,rc_zoom_plus
+	,rc_keystone_v_up
+	,rc_keystone_v_down
+	,rc_keystone_h_left
+	,rc_keystone_h_right
+	,rc_lens_v_up
+	,rc_lens_v_down
+	,rc_lens_h_left
+	,rc_lens_h_right
+	,rc_pip_pop
+	,rc_size
+	,rc_layout
+	,rc_swap
+	;
+ANALOG_INPUT
+	_skip_
+	;
+// STRING_INPUT
+BUFFER_INPUT
+	rx$[500];
+
+DIGITAL_OUTPUT
+	_skip_
+	,_skip_
+	,power_on_fb
+	,power_off_fb
+	,power_is_on
+	,warmup_fb
+	,cooldown_fb
+	,_skip_
+	,shutter_open_fb
+	,shutter_close_fb
+	,_skip_
+	,_skip_
+	,input_1_vga_fb
+	,input_2_fb
+	,input_3_fb
+	,input_4_hdmi_fb
+	,input_5_dvi_fb
+	,input_6_dp_fb
+	,input_7_component_fb
+	,input_8_svideo_fb
+	,input_9_composite_fb
+	,input_10_presenter_fb
+	,input_11_cardreader_fb
+	,input_12_miniusb_fb
+	,_skip_
+	,_skip_
+	,_skip_
+	;
+ANALOG_OUTPUT
+	lamp_hours
+	;
+STRING_OUTPUT
+	tx$
+	;
+
+
+/*******************************************************************************************
+  Parameters
+*******************************************************************************************/
+// INTEGER_PARAMETER
+// SIGNED_INTEGER_PARAMETER
+// LONG_INTEGER_PARAMETER
+// SIGNED_LONG_INTEGER_PARAMETER
+// STRING_PARAMETER
+
+/*
+#BEGIN_PARAMETER_PROPERTIES parameter_variable, parameter_variable, ...
+   // propValidUnits = // unitString or unitDecimal|unitHex|unitPercent|unitCharacter|unitTime|unitTicks;
+   // propDefaultUnit = // unitString, unitDecimal, unitHex, unitPercent, unitCharacter, unitTime or unitTicks;
+   // propBounds = lower_bound , upper_bound;
+   // propDefaultValue = ;  // or, propDefaultValue = "";
+   // propList = // { "value" , "label" } , { "value" , "label" } , ... ;
+   // propShortDescription = "status_bar_hint_text";
+   // #BEGIN_PROP_FULL_DESCRIPTION  line_1...  line_2...  line_n  #END_PROP_FULL_DESCRIPTION
+   // #BEGIN_PROP_NOTES line_1...  line_2...  line_n  #END_PROP_NOTES
+#END_PARAMETER_PROPERTIES
+*/
+
+
+
+/*******************************************************************************************
+  Global Variables
+*******************************************************************************************/
+INTEGER nPWR,nLAMP,nPOLL,nSHUTTER,nINPUT,nPWRACTUAL,nINPUTACTUAL;
+// LONG_INTEGER
+// SIGNED_INTEGER
+// SIGNED_LONG_INTEGER
+// STRING
+
+FUNCTION UpdateFb()
+{
+	integer n;
+	integer s;
+
+	if (nPWR > 0)
+	{
+		power_off_fb = 0;
+		power_on_fb = 1;
+
+		if (nPWR = 10)
+		{
+			cooldown_fb = 1;
+			warmup_fb = 0;
+		}
+		if (nPWR = 11)
+		{
+			warmup_fb = 1;
+			cooldown_fb = 0;
+		}
+		n = nINPUT;
+		s = nSHUTTER;
+	}
+	else
+	{
+		power_on_fb = 0;
+		power_off_fb = 1;
+		warmup_fb = 0;
+		cooldown_fb = 0;
+
+		s = 0;
+		n = 0;
+	}
+
+	if (s > 0)
+	{
+		shutter_open_fb = 0;
+		shutter_close_fb = 1;
+	}
+	else
+	{
+		shutter_close_fb = 0;
+		shutter_open_fb = 1;
+	}
+
+	lamp_hours = nLAMP;
+
+	power_is_on = nPWRACTUAL;
+
+	switch(n)
+	{
+		case (1):
+		{
+			//input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_1_vga_fb			= 1;
+		}
+		case (2):
+		{
+			input_1_vga_fb			= 0;
+		    //input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_2_fb				= 1;
+		}
+     	case (3):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    //input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_3_fb				= 1;
+		}
+		case (4):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    //input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_4_hdmi_fb			= 1;
+		}
+		case (5):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    //input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_5_dvi_fb			= 1;
+		}
+		case (6):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    //input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_6_dp_fb			= 1;
+		}
+		case (7):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    //input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_7_component_fb	= 1;
+		}
+		case (8):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    //input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_8_svideo_fb	= 1;
+		}
+		case (9):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    //input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_9_composite_fb	= 1;
+		}
+		case (10):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    //input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_10_presenter_fb	= 1;
+		}
+        case (11):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    //input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+
+		    input_11_cardreader_fb	= 1;
+		}
+        case (12):
+		{
+			input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    //input_12_miniusb_fb		= 0;
+
+		    input_12_miniusb_fb	= 1;
+		}
+        default:
+        {
+        	input_1_vga_fb			= 0;
+		    input_2_fb				= 0;
+		    input_3_fb				= 0;
+		    input_4_hdmi_fb			= 0;
+		    input_5_dvi_fb			= 0;
+		    input_6_dp_fb			= 0;
+		    input_7_component_fb	= 0;
+		    input_8_svideo_fb		= 0;
+		    input_9_composite_fb	= 0;
+		    input_10_presenter_fb	= 0;
+		    input_11_cardreader_fb	= 0;
+		    input_12_miniusb_fb		= 0;
+        }
+	}
+}
+
+/*******************************************************************************************
+  Event Handlers
+*******************************************************************************************/
+PUSH power_on
+{
+	nPOLL = 0;
+	tx$ = "(PWR1)";
+	nPWR = 1;
+	UpdateFb();
+}
+
+PUSH power_off
+{
+	nPOLL = 0;
+	tx$ = "(PWR0)";
+	nPWR = 0;
+	UpdateFb();
+}
+
+PUSH power
+{
+	if (nPWR > 0)
+	{
+		nPOLL = 0;
+		tx$ = "(PWR0)";
+		nPWR = 0;
+		UpdateFb();
+	}
+	else
+	{
+		nPOLL = 0;
+		tx$ = "(PWR1)";
+		nPWR = 1;
+		UpdateFb();
+	}
+}
+
+PUSH shutter_open
+{
+	nPOLL = 0;
+	tx$ = "(SHU 0)";
+	nSHUTTER = 0;
+	UpdateFb();
+}
+PUSH shutter_close
+{
+	nPOLL = 0;
+	tx$ = "(SHU 1)";
+	nSHUTTER = 1;
+	UpdateFb();
+}
+
+PUSH shutter_open_close_toggle
+{
+	nPOLL = 0;
+	tx$ = "(KEY 2)";
+	delay(5);
+	tx$ = "(SHU?)";
+	/*
+	if (nSHUTTER = 1)
+	{
+		tx$ = "(SHU 0)";
+		nSHUTTER = 0;
+	}
+	else
+	{
+		tx$ = "(SHU 1)";
+		nSHUTTER = 1;
+	}
+	UpdateFb();
+	*/
+}
+
+
+
+PUSH poll_enable
+{
+	while(poll_enable)
+	{
+		nPOLL = nPOLL + 1;
+		switch(nPOLL)
+		{
+			case (5):
+			{
+				tx$ = "(PWR?)";
+			}
+			case (6):
+			{
+				if (is_Laser = 0)
+					tx$ = "(LIF+LP1H?)";
+				else
+					tx$ = "(LIF+LSHS?)";
+			}
+			case (7):
+			{
+				if (nPWR > 0)
+					tx$ = "(SHU?)";
+				else
+					nPOLL = 0;
+			}
+			case (8):
+			{
+				if(nPWR > 0)
+					tx$ = "(SIN?)";
+				else
+					nPOLL = 0;
+			}
+			default:
+			{
+				if (nPOLL > 8)
+					nPOLL = 0;
+			}
+		}
+		delay(50);
+	}
+}
+
+PUSH input_1_vga			{ tx$ = "(SIN1)"; nINPUT = 1; UpdateFb();}
+PUSH input_2				{ tx$ = "(SIN2)"; nINPUT = 2; UpdateFb(); }
+PUSH input_3				{ tx$ = "(SIN3)"; nINPUT = 3; UpdateFb(); }
+PUSH input_4_hdmi			{ tx$ = "(SIN4)"; nINPUT = 4; UpdateFb(); }
+PUSH input_5_dvi			{ tx$ = "(SIN5)"; nINPUT = 5; UpdateFb(); }
+PUSH input_6_dp				{ tx$ = "(SIN6)"; nINPUT = 6; UpdateFb(); }
+PUSH input_7_component		{ tx$ = "(SIN7)"; nINPUT = 7; UpdateFb(); }
+PUSH input_8_svideo			{ tx$ = "(SIN8)"; nINPUT = 8; UpdateFb(); }
+PUSH input_9_composite		{ tx$ = "(SIN9)"; nINPUT = 9; UpdateFb(); }
+PUSH input_10_presenter		{ tx$ = "(SIN10)"; nINPUT = 10; UpdateFb(); }
+PUSH input_11_cardreader	{ tx$ = "(SIN11)"; nINPUT = 11; UpdateFb(); }
+PUSH input_12_miniusb		{ tx$ = "(SIN12)"; nINPUT = 12; UpdateFb(); }
+
+THREADSAFE CHANGE rx$
+{
+	string temp[100];
+	string cmd[10];
+	string value[30];
+	integer x;
+              
+	if (len(rx$) >  400)
+		clearbuffer(rx$);		
+
+	while(find(")",rx$) > 0)
+	{
+		temp = remove(")",rx$);
+		
+		if (find("!",temp))
+		{
+			cmd = remove("!",temp);
+			value = remove("(",cmd); //remove header
+			cmd = left(cmd,len(cmd) - 1);
+			value = left(temp,len(temp)-1);
+
+			switch(1)
+			{
+				case(find("PWR",cmd)):
+				{
+					x = atoi(value);
+					if (nPWRACTUAL = 0 && x = 1 && nINPUT > 0)
+						makestring(tx$,"(SIN%u)",nINPUT);
+					nPWRACTUAL = x;
+					nPWR = x;
+					UpdateFb();
+				}
+				case(find("SHU",cmd)):
+				{
+					nSHUTTER = atoi(value);
+					UpdateFb();
+				}
+				case(find("LIF+",cmd)):
+				{
+					nLAMP = atoi(value);
+					UpdateFb();
+				}
+				case(find("SIN",cmd)):
+				{
+					nINPUTACTUAL = atoi(value);
+					if (nPWR > 0 && persistent_input)
+					{
+						if (nINPUT > 0 && nINPUTACTUAL <> nINPUT)
+							makestring(tx$,"(SIN%u)",nINPUT);
+					}
+					UpdateFb();
+				}
+			}
+		}
+	}
+}
+
+
+PUSH rc_info             { tx$ = "(KEY66)"; }
+PUSH rc_auto             { tx$ = "(KEY47)"; }
+PUSH rc_1                { tx$ = "(KEY26)"; }
+PUSH rc_2                { tx$ = "(KEY27)"; }
+PUSH rc_3                { tx$ = "(KEY28)"; }
+PUSH rc_4                { tx$ = "(KEY29)"; }
+PUSH rc_5                { tx$ = "(KEY30)"; }
+PUSH rc_6                { tx$ = "(KEY31)"; }
+PUSH rc_7                { tx$ = "(KEY32)"; }
+PUSH rc_8                { tx$ = "(KEY33)"; }
+PUSH rc_9                { tx$ = "(KEY34)"; }
+PUSH rc_0                { tx$ = "(KEY36)"; }
+PUSH rc_help             { tx$ = "(KEY35)"; }
+PUSH rc_hotkey           { tx$ = "(KEY65)"; }
+PUSH rc_menu             { tx$ = "(KEY19)"; }
+PUSH rc_test             { tx$ = "(KEY1)"; }
+PUSH rc_shutter          { tx$ = "(KEY2)"; }
+PUSH rc_exit             { tx$ = "(KEY20)"; }
+PUSH rc_up               { tx$ = "(KEY38)"; }
+PUSH rc_down             { tx$ = "(KEY42)"; }
+PUSH rc_left             { tx$ = "(KEY39)"; }
+PUSH rc_right            { tx$ = "(KEY41)"; }
+PUSH rc_enter            { tx$ = "(KEY40)"; }
+PUSH rc_input            { tx$ = "(KEY48)"; }
+PUSH rc_osd              { tx$ = "(KEY49)"; }
+PUSH rc_contrast         { tx$ = "(KEY24)"; }
+PUSH rc_bright           { tx$ = "(KEY25)"; }
+PUSH rc_focus_left       { tx$ = "(KEY5)"; }
+PUSH rc_focus_right      { tx$ = "(KEY6)"; }
+PUSH rc_proj             { tx$ = "(KEY22)"; }
+PUSH rc_gamma            { tx$ = "(KEY23)"; }
+PUSH rc_zoom_minus       { tx$ = "(KEY9)"; }
+PUSH rc_zoom_plus        { tx$ = "(KEY10)"; }
+PUSH rc_keystone_v_up    { tx$ = "(KEY71)"; }
+PUSH rc_keystone_v_down  { tx$ = "(KEY72)"; }
+PUSH rc_keystone_h_left  { tx$ = "(KEY69)"; }
+PUSH rc_keystone_h_right { tx$ = "(KEY70)"; }
+PUSH rc_lens_v_up        { tx$ = "(KEY18)"; }
+PUSH rc_lens_v_down      { tx$ = "(KEY17)"; }
+PUSH rc_lens_h_left      { tx$ = "(KEY13)"; }
+PUSH rc_lens_h_right     { tx$ = "(KEY14)"; }
+PUSH rc_pip_pop          { tx$ = "(KEY15)"; }
+PUSH rc_size             { tx$ = "(KEY67)"; }
+PUSH rc_layout           { tx$ = "(KEY68)"; }
+PUSH rc_swap             { tx$ = "(KEY43)"; }
+
+
+
+
+/*******************************************************************************************
+  Main()
+******************************************************************************************/
+Function Main()
+{
+	nPWR = 0;
+	nLAMP = 0;
+	WaitForInitializationComplete();
+	UpdateFb();
+}
+

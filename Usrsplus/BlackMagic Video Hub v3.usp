@@ -1,0 +1,314 @@
+/*
+  By Daniel Portugal
+  v3
+  - added string_input ip address$
+*/
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#DEFINE_CONSTANT MAX_IO 32
+
+#DEFINE_CONSTANT QUEUE_DELIMITER        "\n"          //character to delimit each command
+#DEFINE_CONSTANT KEEP_QUEUE_DELIM_IN_TX 1             //transmit the delimiter with the command sent to tx$
+#DEFINE_CONSTANT CMD_SIZE               100           //number of characters per command
+#DEFINE_CONSTANT QUEUE_SIZE             5000          //number of characters. use cmd_size * desired queue depth.
+#DEFINE_CONSTANT TRANSMIT_SPEED         30            //how fast should the queue send each command in hundredths of a second.
+
+#DEFINE_CONSTANT RX_USE_DELIMITER       1             //if 0, then RX will trigger parsed based on a RX_TIMEOUT
+#DEFINE_CONSTANT RX_TIMEOUT             50            //when wait expires with this timer then it will trigger the ParseRx function.
+#DEFINE_CONSTANT RX_DELIMITER           "\x0A"
+#DEFINE_CONSTANT RX_DATA_LEN            200           //max number of chars expected to parse.
+
+
+DIGITAL_INPUT
+	_skip_, //for parameter
+	connect,
+    debug;
+
+STRING_INPUT
+    ip_address$[32];
+
+DIGITAL_OUTPUT
+	_skip_, //for parameter
+    connected;
+
+ANALOG_INPUT
+		_skip_,//for break
+    output_source[MAX_IO];
+
+ANALOG_OUTPUT
+	_skip_, //for string input
+	_skip_, //for break
+    output_source_fb[MAX_IO];
+STRING_OUTPUT
+    input_labels[MAX_IO]
+    ,output_labels[MAX_IO]
+    ;
+
+
+STRING_PARAMETER IP_Address[32];
+TCP_CLIENT tcpClient[6000];
+INTEGER lastheader;
+STRING ipaddress[32];
+SIGNED_INTEGER connectedstatus;
+INTEGER nConnect;
+
+/* QUEUE Variables **************************************************************/
+INTEGER txSendOK;               //logic flag
+INTEGER nTxWait;                //threading flag
+INTEGER nTxQueue;               //threading flag
+INTEGER nSendLoop;              //threading flag
+INTEGER nRxTimer;               //threading flag
+STRING  sQUEUE[QUEUE_SIZE];      //command queue
+
+/* QUEUE FUNCTIONS ****************************************************************/
+FUNCTION TxTimer()
+{
+    if (debug) trace("\n[BlackMagic Video Hub]TxTimer Started.");
+    txSendOK = 0;
+    nTxWait = 1;
+    WAIT(TRANSMIT_SPEED,wTxTimer)
+    {
+        if (debug) trace("\n[BlackMagic Video Hub]TxTimer End.");
+        txSendOK = 1;
+        nTxWait = 0;
+    }
+}
+
+FUNCTION StartTxTimer()
+{
+    If (nTxWait)
+    {
+        if (debug) trace("\n[BlackMagic Video Hub]TxTimer Retimed.");
+        retimewait(TRANSMIT_SPEED,wTxTimer);
+    }
+    else
+        TxTimer();
+}
+
+FUNCTION DoSend()
+{
+    string toSend[CMD_SIZE];
+
+    if (nSendLoop = 0)
+    {
+        if (debug) trace("\n[BlackMagic Video Hub]Starting Send Loop.");
+        while(find(QUEUE_DELIMITER,sQUEUE) > 0)
+        {
+            nSendLoop = 1;
+            if (debug) trace("\n[BlackMagic Video Hub]In Send Loop. sQueue Length=%u",len(sQUEUE));
+            if (txSendOK = 1)
+            {
+                toSend = remove(QUEUE_DELIMITER,sQUEUE);
+                if (KEEP_QUEUE_DELIM_IN_TX)
+                {
+                    if (debug) trace("\n[BlackMagic Video Hub]Sending=%s",toSend);
+                    //tx$ = toSend;
+                    SocketSend(tcpClient,toSend);
+                }
+                else
+                {
+                    toSend = left(toSend,len(toSend) - len(QUEUE_DELIMITER));
+                    if (debug) trace("\n[BlackMagic Video Hub]Sending=%s",toSend);
+                    //tx$ = toSend;
+                    SocketSend(tcpClient,toSend);
+                }
+                StartTxTimer();
+            }
+            else
+            {
+                if (debug) trace("\n[BlackMagic Video Hub]txSendOK = 0.");
+            }
+            delay(5);
+        }
+        nSendLoop = 0;
+    }
+}
+
+
+FUNCTION AddToQueue(string cmd)
+{
+    if (debug) trace("\n[BlackMagic Video Hub]Adding to Queue:%s",cmd);
+
+    if(right(cmd,len(QUEUE_DELIMITER)) = QUEUE_DELIMITER)
+    {
+        sQUEUE = sQUEUE + cmd;
+    }
+    else
+    {
+        sQUEUE = sQUEUE + cmd + QUEUE_DELIMITER;
+    }
+    DoSend();
+}
+
+FUNCTION DoDisconnect()
+{
+    nConnect = 0;
+    if (connected = 1)
+    {
+        if (debug) trace("\n[BlackMagic Video Hub] Disconnecting from %s",IpAddress);
+        SocketDisconnectClient(tcpClient);
+    }
+}
+
+FUNCTION DoConnect()
+{
+    if (nConnect = 0)
+    {
+        nConnect = 1;
+	    While(nConnect = 1)
+	    {
+	        if (len(ipAddress) > 0 && (connected = 0))
+	        {
+	        	if (tcpClient.SocketStatus = 0 || tcpClient.SocketStatus = 3 || tcpClient.SocketStatus = 4 || tcpClient.SocketStatus = 5 || tcpClient.SocketStatus = 7)
+	        	{
+	            	if (debug) trace("\n[BlackMagic Video Hub] Trying to Connect to %s\n",IpAddress);
+		            SocketConnectClient(tcpClient,IpAddress,9990,0);
+		        }
+	        }
+	        delay(3000);
+	    }
+        DoDisconnect();
+    }
+}
+
+FUNCTION ParseRx(string rx)
+{
+	string temp[100];
+    string trash[100];
+    integer i;
+    integer o;
+
+	if (debug) trace("\n[BlackMagic Video Hub]SDI Switcher Rx:%s",tcpClient.SocketRxBuf);
+
+    while(find("\x0A",rx)> 0)
+    {
+        temp = remove("\x0A",rx);
+        temp = left(temp,len(temp) - 1);
+
+        switch(1)
+        {
+            case (find("INPUT LABELS:",temp)):
+            {
+            	i = 0;
+            	while(find("\x0A",rx) > 0)
+            	{
+            		i = i + 1;
+            		temp = remove("\x0A",rx);
+            		temp = left(temp,len(temp) - 1);
+            		if (len(temp) < 1)
+            			break;
+            		input_labels[i] = temp;
+            	}
+            }
+            case (find("OUTPUT LABELS:",temp)):
+            {
+            	i = 0;
+            	while(find("\x0A",rx) > 0)
+            	{
+            		i = i + 1;
+            		temp = remove("\x0A",rx);
+            		temp = left(temp,len(temp) - 1);
+            		if (len(temp) < 1)
+            			break;
+            		output_labels[i] = temp;
+            	}
+
+            }
+            case (find("VIDEO OUTPUT ROUTING:",temp)):
+            {
+            	temp = remove("\x0A",rx);
+            	o = atoi(temp);
+            	o = o + 1;
+            	trash = remove(" ",temp);
+            	i = atoi(temp);
+            	i = i + 1;
+            	if (o <= MAX_IO)
+            		output_source_fb[o] = i;
+            }
+        }
+    }
+    if (debug) trace("\n[BlackMagic Video Hub]SDI Switcher Rx - unparsed:%s\n",rx);
+    txSendOK = 1;
+}
+
+
+PUSH connect
+{
+    DoConnect();
+}
+
+RELEASE connect
+{
+    DoDisconnect();
+}
+
+
+SOCKETCONNECT tcpClient
+{
+	clearbuffer(tcpClient.SocketRxBuf);
+    if(debug) trace("\n[BlackMagic Video Hub] Connected to %s.",IpAddress);
+    GenerateUserNotice("[BlackMagic Video Hub] Connected to %s.",IpAddress);
+	connectedstatus = 1;
+	connected = 1;
+}
+
+SOCKETDISCONNECT tcpClient
+{
+    if(debug) trace("\n[BlackMagic Video Hub] Disconnected from %s.",IpAddress);
+    GenerateUserError("[BlackMagic Video Hub] Disconnected from %s.",IpAddress);
+    connectedstatus = 0;
+	connected = 0;
+	clearbuffer(tcpClient.SocketRxBuf);
+}
+
+SOCKETSTATUS tcpClient
+{
+    if(debug) trace("\n[BlackMagic Video Hub] SocketStatus=%d",tcpClient.SocketStatus);
+	connectedstatus = SocketGetStatus();
+}
+
+SOCKETRECEIVE tcpClient
+{
+	string temp[6000];
+	temp = tcpClient.SocketRxBuf;
+	ClearBuffer(tcpClient.SocketRxBuf);
+	ParseRx(temp);
+}
+
+CHANGE output_source
+{
+    integer out;
+    integer in;
+    string cmd[50];
+    if (connected)
+    {
+        out = getlastmodifiedarrayindex();
+        in = output_source[out];
+
+
+        if (in > 0)
+        {
+            out = out - 1;
+            in = in - 1;
+            makestring(cmd,"VIDEO OUTPUT ROUTING:\n%u %u\n\n",out,in);
+            //SocketSend(tcpClient,cmd);
+            AddToQueue(cmd);
+        }
+
+    }
+}
+
+CHANGE ip_address$
+{
+  ipaddress = ip_address$;
+}
+
+
+FUNCTION Main()
+{
+    connectedstatus = 0;
+    nConnect = 0;
+    ipaddress = Ip_Address; //set initial value from parameter;
+    WaitForInitializationComplete();
+}

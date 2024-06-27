@@ -1,0 +1,527 @@
+/*******************************************************************************************
+  SIMPL+ Module Information
+*******************************************************************************************/
+/*
+Dealer Name: Spinitar
+System Name: 
+System Number:1.0
+Programmer:philip.kopyscinski@spinitar.com
+Comments:           
+	v2
+	- redid polling function. CPU load was being taxed possibly creating threads.
+*/
+
+/*******************************************************************************************
+  Compiler Directives
+*******************************************************************************************/
+#SYMBOL_NAME ""
+#DEFINE_CONSTANT CMD_LENGTH 9
+#DEFINE_CONSTANT POLL_TIME 500
+#DEFINE_CONSTANT true 1
+#DEFINE_CONSTANT false 0
+#DEFINE_CONSTANT HEADER "\x07\x01"
+#DEFINE_CONSTANT FOOTER "\x08\x0D"
+#DEFINE_CONSTANT CMD_WRITE 2
+#DEFINE_CONSTANT CMD_READ 1
+#DEFINE_CONSTANT CMD_RX 0x00
+#DEFINE_CONSTANT VOL_RANGE 64
+#DEFAULT_VOLATILE
+#ENABLE_STACK_CHECKING
+#ENABLE_TRACE
+#PRINT_TO_TRACE
+
+#HELP_BEGIN
+Control module for Avocor AVW6550
+
+RS-232 settings:
+115200, 8, 1, none, no HW, no SW
+
+EnablePolling polls the device every 30 seconds while latched high. stops polling on falling edge.
+
+Volume is scaled internall from 0-65535 to 0-100. No pre-scaling is necessary.
+
+#HELP_END
+
+
+/*******************************************************************************************
+  DIGITAL, ANALOG and SERIAL INPUTS and OUTPUTS
+*******************************************************************************************/
+digital_input
+EnablePolling,_skip_,
+PowerOn,
+PowerOff,
+PowerToggle,_skip_,
+InputDisplayPort,
+InputHdmi1,
+InputHdmi2,
+InputOps,
+InputWps,_skip_,
+VolumeMuteOn,
+VolumeMuteOff;
+
+analog_input
+Volume;
+
+buffer_input _skip_,
+RX$[CMD_LENGTH];
+
+digital_output _skip_,_skip_,
+Power_Fb, _skip_,_skip_,_skip_,
+InputDisplayPort_Fb,
+InputHdmi1_Fb,
+InputHdmi2_Fb,
+InputOps_Fb,
+InputWps_Fb, _skip_,
+VolumeMute_Fb;
+
+analog_output _skip_,
+Volume_Fb;
+
+string_output _skip_,
+TX$;
+
+/*******************************************************************************************
+  Global Variables
+*******************************************************************************************/
+string tempRx$[CMD_LENGTH];
+string CmdQueue[5000];
+string tempCmd[10];
+integer sendOk;
+integer sending;
+integer inSendQueue;
+integer inPolling;
+integer pausePolling; 
+integer pollsequence;
+
+/*******************************************************************************************
+  Functions
+*******************************************************************************************/
+function SendTimer()
+{
+    sending = true;
+    Wait(50,SendWait)
+    {
+        sending = false;
+        sendOk = true;
+    }
+}
+
+function StartSendTimer()
+{
+    if (sending = true)
+    {
+        RetimeWait(50, SendWait);
+    }
+    else
+    {
+        SendTimer();
+    }
+}
+
+function SendNext()
+{
+    string temp[10];
+    while(find(HEADER, CmdQueue) > 0) // pop next command if available
+    {
+        sending = true;
+        if (sendOk = true)
+        {
+            temp = remove(FOOTER,CmdQueue);
+            TX$ = temp;
+            StartSendTimer();
+        }
+        delay(25);
+    }
+    sending = false;
+}
+
+function Send(string cmd) // add command to queue and pop next command
+{
+    if (right(cmd,2) <> FOOTER) // add EOL if not in command
+    {
+        CmdQueue = CmdQueue + cmd + FOOTER;
+    }
+    else
+    {
+        CmdQueue = CmdQueue + cmd;
+    }
+    SendNext();
+}
+
+string_function CreateCmdString(integer id, integer cmdType, string cmd, integer val)
+{
+    string result[10];
+    if(cmdType = CMD_WRITE)
+    {
+        // <header><id><cmdType><cmd><value><footer>
+        MakeString(result, "%s%s%s%s%s", HEADER, chr(cmdType), cmd, chr(val), FOOTER);
+    }
+    else
+    {
+        // <header><id><cmdType><cmd><footer>
+        MakeString(result, "%s%s%s%s", HEADER, chr(cmdType), cmd, FOOTER);
+    }
+    return(result);
+}
+
+function PollDevice()
+{     
+	inPolling = 1;
+    while (EnablePolling = true)
+    {                                   
+    	if (pausePolling > 0)
+    	{
+    		pausePolling = pausePolling - 1;
+    	}                                   
+    	else
+    	{
+	    	pollsequence = pollsequence + 1;
+	    	switch(pollsequence)
+	    	{   	    		
+	    		case (5):       
+	    		{
+	    			tempCmd = CreateCmdString(1, CMD_READ,"POW",0);
+	    			if (Find(tempCmd,CmdQueue) = false)
+	    				Send(tempCmd);
+	    		}
+	    		case (6):
+	    		{
+	    			if (Power_Fb = true)
+	    			{
+	    				tempCmd = CreateCmdString(1,CMD_READ,"MIN",0); // Input source
+			            if (Find(tempCmd,CmdQueue) = false)
+			                Send(tempCmd);			            
+	    			}
+	    			else
+	    				pollsequence = 0;		
+	    		}
+	    		case (7):
+	    		{
+	    			if (Power_Fb = true)
+	    			{
+	    				tempCmd = CreateCmdString(1,CMD_READ,"VOL",0); // Volume
+			            if (Find(tempCmd, CmdQueue) = false)
+			                Send(tempCmd);
+	    			}
+	    			else
+	    				pollsequence = 0;	
+	    		}
+	    		default:
+	    			if (pollsequence > 7)
+	    				pollsequence = 0;
+	    	}
+	    }
+	    delay(100);
+    } 
+    inPolling = 0;
+}
+
+integer_function ScaleForDevice(integer val)
+{
+    integer newVal;
+    newVal = ((val * 100) / 65535);
+    return(newVal);
+}
+
+integer_function ScaleForFeedback(integer val)
+{
+    integer newVal;
+    newVal = ((val * 65535) / 100);
+    return(newVal);
+}
+
+function UpdateAvSource(string value)
+{
+    if (CompareStrings("\x0D", value) = 0)
+    {
+        InputHdmi1_Fb = 0;
+        InputHdmi2_Fb = 0;
+        InputOps_Fb = 0;
+        InputWps_Fb = 0;
+        InputDisplayPort_Fb = 1;
+    }
+    else if (CompareStrings("\x09", value) = 0)
+    {
+        InputDisplayPort_Fb = 0;
+        InputOps_Fb = 0;
+        InputWps_Fb = 0;
+        InputHdmi2_Fb = 0;
+        InputHdmi1_Fb = 1;
+    }
+    else if (CompareStrings("\x0A", value) = 0)
+    {
+        InputDisplayPort_Fb = 0;
+        InputOps_Fb = 0;
+        InputWps_Fb = 0;
+        InputHdmi1_Fb = 0;
+        InputHdmi2_Fb = 1;
+    }
+    else if (CompareStrings("\x0E", value) = 0)
+    {
+        InputDisplayPort_Fb = 0;
+        InputWps_Fb = 0;
+        InputHdmi1_Fb = 0;
+        InputHdmi2_Fb = 0;
+        InputOps_Fb = 1;
+    }
+    else if (CompareStrings("\x13", value) = 0)
+    {
+        InputDisplayPort_Fb = 0;
+        InputOps_Fb = 0;
+        InputHdmi1_Fb = 0;
+        InputHdmi2_Fb = 0;
+        InputWps_Fb = 1;
+    }
+    else
+    {
+        Print("Unknown input source received: %s", value);
+    }
+}
+
+function ProcessRx()
+{
+    string response[CMD_LENGTH];
+    string cmd[3];
+    string _header[2];
+    string value[3];
+    integer volVal;
+    integer msgType;
+
+    response = tempRx$;
+    _header = remove(HEADER,response); // clear header
+    msgType = Byte(response,1);
+    cmd = Mid(response,2,3);
+
+    if(msgType = 0x00)
+    {
+        if (CompareStrings("POW", cmd) = 0)
+        {
+            value = mid(response,5,1);
+            if (GetC(value) > 0)
+            {
+                Power_Fb = true;
+            }
+            else
+            {
+                Power_fb = false;
+            }
+        }
+        else if (CompareStrings("MIN", cmd) = 0)
+        {
+            value = mid(response,5,1);
+            UpdateAvSource(value);
+        }
+        else if (CompareStrings("MUT", cmd) = 0)
+        {
+            value = mid(response,5,1);
+            if (Getc(Value) > 0)
+            {
+                VolumeMute_Fb = true;
+            }
+            else
+            {
+                VolumeMute_Fb = false;
+            }
+        }
+        else if (CompareStrings("VOL", cmd) = 0)
+        {
+            value = mid(response,5,1);
+            volVal = Getc(value);
+            Volume_Fb = ScaleForFeedback(volVal);
+        }
+        else
+        {
+            Print("Unknown command received: %s", cmd);
+        }
+    }
+    else
+    {
+        Print("Unexpected command type received: %d", msgType);
+    }
+}
+
+
+/*******************************************************************************************
+  Event Handlers
+*******************************************************************************************/
+push EnablePolling
+{
+	if (inPolling = 0)
+		PollDevice();
+}
+/*
+release EnablePolling
+{
+  CancelWait(PollWait);
+}
+*/
+
+push PowerOn
+{
+    string cmd[10];
+    pausePolling = 10;
+    Power_fb = 1;
+    cmd =  CreateCmdString(1, CMD_WRITE, "POW", 1);
+    Send(cmd);
+}
+
+push PowerOff
+{
+    string cmd[10];
+    pausePolling = 10;
+    Power_fb = 1;
+    cmd =  CreateCmdString(1, CMD_WRITE, "POW", 0);
+    Send(cmd);
+}
+
+push PowerToggle
+{
+    string cmd[10];
+    pausePolling = 10;
+    if (Power_Fb = true)
+    {
+        Power_fb = 1;
+        cmd =  CreateCmdString(1, CMD_WRITE, "POW", 0);
+    }
+    else
+    {
+        Power_fb = 0;
+        cmd =  CreateCmdString(1, CMD_WRITE, "POW", 1);
+    }
+    send(cmd);
+}
+
+push InputDisplayPort
+{
+    string cmd[10];
+    if (Power_Fb = true)
+    {
+        pausePolling = 10;
+        InputHdmi1_Fb = 0;
+        InputHdmi2_Fb = 0;
+        InputDisplayPort_Fb = 1;
+        cmd =  CreateCmdString(1, CMD_WRITE, "MIN", 0x0D);
+        send(cmd);
+    }
+}
+
+push InputHdmi1
+{
+    string cmd[10];
+    if (Power_Fb = true)
+    {
+        pausePolling = 10;
+        InputHdmi2_Fb = 0;
+        InputDisplayPort_Fb = 0;
+        InputHdmi1_Fb = 1;
+        cmd =  CreateCmdString(1, CMD_WRITE, "MIN", 0x09);
+        send(cmd);
+    }
+}
+
+push InputHdmi2
+{
+    string cmd[10];
+    if (Power_Fb = true)
+    {
+        pausePolling = 10;
+        InputHdmi1_Fb = 0;
+        InputDisplayPort_Fb = 0;
+        InputHdmi2_Fb = 1;
+        cmd =  CreateCmdString(1, CMD_WRITE, "MIN", 0x0A);
+        send(cmd);
+    }
+}
+
+push InputOps
+{
+    string cmd[10];
+    if (Power_Fb = true)
+    {
+        pausePolling = 10;
+        InputHdmi2_Fb = 0;
+        InputDisplayPort_Fb = 0;
+        InputHdmi1_Fb = 0;
+        InputWps_Fb = 0;
+        InputOps_Fb = 1;
+        cmd =  CreateCmdString(1, CMD_WRITE, "MIN", 0x0E);
+        send(cmd);
+    }
+}
+
+push InputWps
+{
+    string cmd[10];
+    if (Power_Fb = true)
+    {
+        pausePolling = 10;
+        InputHdmi2_Fb = 0;
+        InputDisplayPort_Fb = 0;
+        InputHdmi1_Fb = 0;
+        InputOps_Fb = 0;
+        InputWps_Fb = 1;
+        cmd =  CreateCmdString(1, CMD_WRITE, "MIN", 0x13);
+        send(cmd);
+    }
+}
+
+push VolumeMuteOn
+{
+    string cmd[10];
+    if (Power_fb = true)
+    {
+        VolumeMute_Fb = true;
+        cmd = CreateCmdString(1, CMD_WRITE, "MUT", 1);
+        Send(cmd);
+    }
+}
+
+push VolumeMuteOff
+{
+    string cmd[10];
+    if (Power_fb = true)
+    {
+        VolumeMute_Fb = false;
+        cmd = CreateCmdString(1, CMD_WRITE, "MUT", 0);
+        Send(cmd);
+    }
+}
+
+change Volume
+{
+    integer lvl;
+    string cmd[10];
+    if(Power_Fb = true)
+    {
+        lvl = ScaleForDevice(Volume);
+        Volume_fb = Volume;
+        cmd = CreateCmdString(1, CMD_WRITE, "VOL", lvl);
+        Send(cmd);
+    }
+}
+
+threadsafe change RX$
+{
+  while (1)
+  {
+    try {
+      tempRx$ = gather("\x08",RX$);
+      ProcessRx();
+    }
+    catch
+    {
+      print("Avocor AVW6550 -- Exception encountered while parsing response: %s.", GetExceptionMessage());
+    }
+  }
+}
+
+Function Main()
+{
+  WaitForInitializationComplete();
+  CmdQueue 			= ""; //set queue to empty
+  sendOk 			= true;
+  sending 			= false;
+  inSendQueue 		= false;
+  pausePolling 		= 0;
+  inPolling 		= false;
+}
